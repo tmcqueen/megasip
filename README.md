@@ -1,2 +1,132 @@
-# megasip
-A KDE/Wayland port of the steadfast MicroSIP client
+# MegaSIP
+
+A voice-only SIP softphone for KDE Plasma on Wayland: a Rust port of
+[MicroSIP](https://www.microsip.org/) (GPLv2), "MicroSIP-Lite". It behaves like MicroSIP
+except for settings, which are one Preferences window with the account editor built in.
+
+- Pure-Rust SIP and media: [`rsiprtp`](https://crates.io/crates/rsiprtp) for SIP parsing,
+  digest auth, SDP, RTP, G.711 / G.722 / Opus, DTMF and SRTP; the user-agent logic
+  (transactions, registration, dialogs, hold, transfer, conference) is ours.
+- Echo cancellation and noise suppression: [`sonora`](https://crates.io/crates/sonora),
+  a pure-Rust port of WebRTC's audio processing (AEC3).
+- Sound through PipeWire/PulseAudio (`cpal`), opened only while you're on a call, so
+  Plasma's microphone indicator tells the truth.
+- Kirigami UI (Qt 6 / QML through `cxx-qt`), system tray, KDE notifications.
+
+## Features
+
+Multiple accounts (UDP, TCP, TLS; DNS SRV; outbound proxy; NAT detection via rport and
+optional STUN) · dial pad with DTMF (RFC 2833, SIP INFO or in-band) · several calls at
+once with hold/resume, mute, blind and attended transfer, and a local conference ·
+call history (missed / incoming / outgoing) · contacts (imports MicroSIP's
+`Contacts.xml` or CSV) · auto answer (all calls, or when the server asks) · do not
+disturb · call forwarding (always / busy / no answer) · call waiting · single-call mode
+· deny incoming · SRTP (SDES, optional or mandatory) · ringtone on its own device ·
+redial · voicemail button · `tel:` / `sip:` / `callto:` links · start at login.
+
+Not included: video, chat/messaging, presence/BLF, call recording, and MicroSIP's
+Windows-only extras.
+
+## Build and install
+
+```sh
+sudo apt install cargo build-essential pkg-config clang \
+    qt6-base-dev qt6-declarative-dev libkf6i18n-dev libasound2-dev \
+    qml6-module-org-kde-kirigami qml6-module-org-kde-kirigamiaddons-formcard \
+    qml6-module-org-kde-kirigamiaddons-components qml6-module-org-kde-notifications \
+    qml6-module-qt-labs-platform
+./install.sh          # builds, then installs into ~/.local (no sudo)
+megasip
+```
+
+`install.sh` also installs the desktop entry, icon and notification config, and
+registers MegaSIP for `sip:`/`tel:` links where no other app handles them.
+
+## Use
+
+| | |
+|---|---|
+| Type a number, Enter | Call (numbers, `user@domain`, `sip:` URIs, or an IP address for a direct call) |
+| Call button with an empty field | Recalls the last number (press again to dial) |
+| Keys during a call | Send DTMF |
+| Esc on the dial pad | Hang up |
+| Close the window | Keeps running in the tray (Quit from the tray menu or Ctrl+Q) |
+| Ctrl+1 … Ctrl+3 | Dial pad, contacts, calls |
+| Ctrl+, | Preferences |
+
+From the command line (talks to the running instance):
+
+```sh
+megasip 1002              # or sip:bob@example.com, tel:+15551234
+megasip --answer
+megasip --hangup
+megasip --minimized
+megasip --quit
+```
+
+## Preferences
+
+Preferences open in their own window: the gear in the status bar, **Preferences…** in
+the tray menu, or Ctrl+,. Categories sit on the left:
+
+- **Accounts:** your accounts, and the selected one's details. Server, username, password
+  and display name are up front; domain, login, proxy, transport, SRTP, public address,
+  timers, voicemail number, dialing prefix and hide caller ID are under **Advanced**.
+- **Audio:** devices, ringtone, voice processing, codec order.
+- **Calls:** auto answer, call waiting, DTMF method, auto hang-up.
+- **Availability:** do not disturb, call forwarding, deny incoming.
+- **General** and **Network**.
+
+Changes apply when you press **Save**, so accounts re-register once and not on every
+keystroke. On first run with no accounts, Preferences opens on Accounts.
+
+Files:
+
+- `~/.config/megasip/settings.json` holds settings and accounts (mode 0600, because it
+  contains SIP passwords).
+- `~/.local/share/megasip/` holds history, contacts and the optional log.
+
+## Logging
+
+SIP and audio are logged separately, so PulseAudio chatter doesn't bury the SIP trace.
+Set it up under Preferences → Logging:
+
+- **Levels:** one for SIP/calls and one for audio. Debug on SIP shows every SIP message.
+- **Log files:** `~/.local/share/megasip/logs/sip.log` and `audio.log`. Each starts over
+  after 20 MB, keeping the previous one as `*.log.old`.
+- **[Venator](https://crates.io/crates/venator-app):** sends both logs to the viewer
+  (default `127.0.0.1:8362`), where you filter by target: `megasip::engine` for SIP,
+  `pulseaudio`, `cpal` or `megasip::media` for audio. Start Venator first. While it isn't
+  running, MegaSIP retries every 5 s, which costs up to 100 ms on the logging thread, so
+  leave it off when you're not using it.
+
+Changes apply as soon as you save, without a restart.
+
+On the terminal, `MEGASIP_LOG=debug megasip` prints the SIP trace. Audio is limited to
+warnings unless you set `MEGASIP_AUDIO_LOG=info` (or `debug`).
+
+## Tests
+
+```sh
+cargo test                 # unit tests
+tests/interop/run.sh       # end-to-end against a private Asterisk on 127.0.0.1:5070
+```
+
+The interop suite starts its own Asterisk (the system service can stay off) and four
+headless instances (`megasip --cli`). Each instance feeds its own test tone into the
+call instead of using a microphone. The suite checks:
+
+- registration
+- calls over Opus, G.722, G.711 and SRTP
+- that each side hears the right tone
+- hold and resume
+- DTMF
+- decline, cancel and busy
+- blind and attended transfer
+- conference
+
+`megasip --cli` is also handy for scripting: commands on stdin, events as JSON lines.
+
+## License
+
+GPL-2.0-or-later, like MicroSIP. See `LICENSE`.

@@ -1,0 +1,16 @@
+[Global]
+IconName=org.megasip.MegaSIP
+Comment=MegaSIP
+DesktopEntry=org.megasip.MegaSIP
+
+[Event/incomingCall]
+Name=Incoming call
+Comment=Someone is calling you
+Action=Popup
+Urgency=Critical
+ShowInHistory=false
+
+[Event/missedCall]
+Name=Missed call
+Comment=You missed a call
+Action=Popup

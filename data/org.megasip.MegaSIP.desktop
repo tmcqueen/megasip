@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=MegaSIP
+GenericName=SIP Softphone
+Comment=Make and take SIP voice calls
+Exec=megasip %u
+Icon=org.megasip.MegaSIP
+Terminal=false
+Categories=Network;Telephony;Qt;KDE;
+Keywords=sip;voip;phone;call;softphone;microsip;
+MimeType=x-scheme-handler/sip;x-scheme-handler/sips;x-scheme-handler/tel;x-scheme-handler/callto;
+StartupNotify=false
+SingleMainWindow=true
+X-KDE-Shortcuts=
+Actions=Hangup;Answer;
+
+[Desktop Action Answer]
+Name=Answer Call
+Exec=megasip --answer
+
+[Desktop Action Hangup]
+Name=Hang Up
+Exec=megasip --hangup

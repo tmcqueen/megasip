@@ -1,0 +1,538 @@
+//! The audio hub: a 20 ms mixer thread that owns the sound devices, mixes every call
+//! with the microphone (and with each other for conferences), runs echo cancellation,
+//! and plays the ringtone on the ring device.
+
+use super::dsp::{self, Tone, ToneGen};
+use super::{Stream, FRAME};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ring {
+    Off,
+    /// Full ringtone on the ring device.
+    Ringtone,
+    /// Short beeps in the speaker (call waiting).
+    Waiting,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AudioConfig {
+    pub speaker: String,
+    pub microphone: String,
+    pub ring_device: String,
+    pub ringtone: String,
+    pub speaker_volume: u32,
+    pub mic_volume: u32,
+    pub ring_volume: u32,
+    pub echo_cancellation: bool,
+}
+
+struct State {
+    streams: Vec<Arc<Stream>>,
+    conference: bool,
+    mute: bool,
+    tone: Option<ToneGen>,
+    local: VecDeque<i16>,
+    ring: Ring,
+    cfg: AudioConfig,
+    cfg_version: u64,
+    ringtone: Arc<Vec<i16>>,
+    /// Mic level 0..1 for the UI meter.
+    mic_level: f32,
+    spk_level: f32,
+    errors: Vec<String>,
+    /// Testing: no sound devices; the "microphone" is a 1 kHz tone (MEGASIP_NULL_AUDIO).
+    null_audio: bool,
+    /// Dominant frequency of what we play (zero crossings), for tests.
+    spk_freq: f32,
+}
+
+pub struct AudioHub {
+    st: Arc<Mutex<State>>,
+}
+
+type Buf = Arc<Mutex<VecDeque<i16>>>;
+
+struct RingPlayer {
+    samples: Arc<Vec<i16>>,
+    pos: usize,
+    gain: f32,
+}
+
+struct Devices {
+    speaker: Option<cpal::Stream>,
+    mic: Option<cpal::Stream>,
+    ring: Option<cpal::Stream>,
+    spk_buf: Buf,
+    mic_buf: Buf,
+    ring_state: Arc<Mutex<RingPlayer>>,
+    idle_since: Option<Instant>,
+    cfg_version: u64,
+}
+
+fn host() -> cpal::Host {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(h) = cpal::host_from_id(cpal::HostId::PulseAudio) {
+            return h;
+        }
+    }
+    cpal::default_host()
+}
+
+fn find_device(h: &cpal::Host, name: &str, input: bool) -> Option<cpal::Device> {
+    if !name.is_empty() {
+        let devs = if input { h.input_devices().ok() } else { h.output_devices().ok() };
+        if let Some(devs) = devs {
+            for d in devs {
+                if d.to_string() == name {
+                    return Some(d);
+                }
+            }
+        }
+        tracing::warn!("audio device {name:?} not found; using the default");
+    }
+    if input {
+        h.default_input_device()
+    } else {
+        h.default_output_device()
+    }
+}
+
+/// Names of the playback and capture devices, for the settings page.
+pub fn list_devices() -> (Vec<String>, Vec<String>) {
+    // One long-lived connection for listing: opening and dropping a PulseAudio client
+    // each time makes the pulseaudio crate log a spurious "Client disconnected" error.
+    static LIST_HOST: std::sync::OnceLock<Mutex<cpal::Host>> = std::sync::OnceLock::new();
+    let h = LIST_HOST.get_or_init(|| Mutex::new(host())).lock().unwrap_or_else(|e| e.into_inner());
+    let outs = h.output_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default();
+    let ins = h.input_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default();
+    (outs, ins)
+}
+
+fn stream_cfg() -> cpal::StreamConfig {
+    cpal::StreamConfig { channels: 1, sample_rate: 48_000, buffer_size: cpal::BufferSize::Fixed(480) }
+}
+
+fn open_output(dev: &cpal::Device, mut pull: impl FnMut(&mut [f32]) + Send + 'static) -> Result<cpal::Stream, String> {
+    let mut cfg = stream_cfg();
+    let pull = Arc::new(Mutex::new(move |o: &mut [f32]| pull(o)));
+    for attempt in 0..2 {
+        let p = pull.clone();
+        let res = dev.build_output_stream::<f32, _, _>(
+            cfg,
+            move |out: &mut [f32], _| (p.lock().unwrap_or_else(|e| e.into_inner()))(out),
+            |e| tracing::warn!("output stream error: {e}"),
+            None,
+        );
+        match res {
+            Ok(s) => {
+                s.play().map_err(|e| e.to_string())?;
+                return Ok(s);
+            }
+            Err(e) if attempt == 0 => {
+                tracing::debug!("output open with fixed buffer failed ({e}); retrying");
+                cfg.buffer_size = cpal::BufferSize::Default;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("cannot open output".into())
+}
+
+fn open_input(dev: &cpal::Device, buf: Buf) -> Result<cpal::Stream, String> {
+    let mut cfg = stream_cfg();
+    for attempt in 0..2 {
+        let b = buf.clone();
+        let res = dev.build_input_stream::<f32, _, _>(
+            cfg,
+            move |data: &[f32], _| {
+                let mut q = b.lock().unwrap_or_else(|e| e.into_inner());
+                q.extend(data.iter().map(|&s| dsp::clamp16(s * 32767.0)));
+                let max = 48 * 300;
+                if q.len() > max {
+                    let extra = q.len() - max;
+                    q.drain(..extra);
+                }
+            },
+            |e| tracing::warn!("input stream error: {e}"),
+            None,
+        );
+        match res {
+            Ok(s) => {
+                s.play().map_err(|e| e.to_string())?;
+                return Ok(s);
+            }
+            Err(e) if attempt == 0 => {
+                tracing::debug!("input open with fixed buffer failed ({e}); retrying");
+                cfg.buffer_size = cpal::BufferSize::Default;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("cannot open input".into())
+}
+
+fn make_apm() -> sonora::AudioProcessing {
+    use sonora::config::{EchoCanceller, HighPassFilter, NoiseSuppression};
+    let config = sonora::Config {
+        echo_canceller: Some(EchoCanceller::default()),
+        noise_suppression: Some(NoiseSuppression::default()),
+        high_pass_filter: Some(HighPassFilter::default()),
+        ..Default::default()
+    };
+    sonora::AudioProcessing::builder()
+        .config(config)
+        .capture_config(sonora::StreamConfig::new(48_000, 1))
+        .render_config(sonora::StreamConfig::new(48_000, 1))
+        .build()
+}
+
+impl AudioHub {
+    pub fn start() -> Arc<AudioHub> {
+        let st = Arc::new(Mutex::new(State {
+            streams: Vec::new(),
+            conference: false,
+            mute: false,
+            tone: None,
+            local: VecDeque::new(),
+            ring: Ring::Off,
+            cfg: AudioConfig { speaker_volume: 100, mic_volume: 100, ring_volume: 100, echo_cancellation: true, ..Default::default() },
+            cfg_version: 0,
+            ringtone: Arc::new(dsp::default_ringtone()),
+            mic_level: 0.0,
+            spk_level: 0.0,
+            errors: Vec::new(),
+            null_audio: std::env::var_os("MEGASIP_NULL_AUDIO").is_some(),
+            spk_freq: 0.0,
+        }));
+        let st2 = st.clone();
+        std::thread::Builder::new()
+            .name("megasip-audio".into())
+            .spawn(move || mixer_thread(st2))
+            .expect("audio thread");
+        Arc::new(AudioHub { st })
+    }
+
+    pub fn configure(&self, cfg: AudioConfig) {
+        let mut g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        if g.cfg == cfg {
+            return;
+        }
+        if g.cfg.ringtone != cfg.ringtone {
+            g.ringtone = Arc::new(if cfg.ringtone.is_empty() {
+                dsp::default_ringtone()
+            } else {
+                dsp::load_sound(&cfg.ringtone).unwrap_or_else(dsp::default_ringtone)
+            });
+        }
+        let devices_changed = g.cfg.speaker != cfg.speaker
+            || g.cfg.microphone != cfg.microphone
+            || g.cfg.ring_device != cfg.ring_device
+            || g.cfg.ringtone != cfg.ringtone;
+        g.cfg = cfg;
+        if devices_changed {
+            g.cfg_version += 1;
+        }
+    }
+
+    pub fn add_stream(&self, s: Arc<Stream>) {
+        let mut g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        g.streams.retain(|x| x.id != s.id);
+        g.streams.push(s);
+    }
+
+    pub fn remove_stream(&self, id: u64) {
+        self.st.lock().unwrap_or_else(|e| e.into_inner()).streams.retain(|x| x.id != id);
+    }
+
+    pub fn set_conference(&self, on: bool) {
+        self.st.lock().unwrap_or_else(|e| e.into_inner()).conference = on;
+    }
+
+    pub fn set_mute(&self, on: bool) {
+        self.st.lock().unwrap_or_else(|e| e.into_inner()).mute = on;
+    }
+
+    pub fn set_tone(&self, tone: Option<Tone>) {
+        let mut g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        if g.tone.as_ref().map(|t| t.kind()) != tone {
+            g.tone = tone.map(ToneGen::new);
+        }
+    }
+
+    pub fn play_local_dtmf(&self, digit: char) {
+        let mut g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        let t = dsp::dtmf_tone(digit, 120);
+        g.local.extend(t);
+    }
+
+    pub fn set_ring(&self, r: Ring) {
+        self.st.lock().unwrap_or_else(|e| e.into_inner()).ring = r;
+    }
+
+    pub fn levels(&self) -> (f32, f32) {
+        let g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        (g.mic_level, g.spk_level)
+    }
+
+    pub fn speaker_freq(&self) -> f32 {
+        self.st.lock().unwrap_or_else(|e| e.into_inner()).spk_freq
+    }
+
+    pub fn take_errors(&self) -> Vec<String> {
+        std::mem::take(&mut self.st.lock().unwrap_or_else(|e| e.into_inner()).errors)
+    }
+}
+
+fn level(v: &[i16]) -> f32 {
+    let peak = v.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32 / 32768.0;
+    // Perceptual-ish scale.
+    (peak.sqrt()).min(1.0)
+}
+
+fn mixer_thread(st: Arc<Mutex<State>>) {
+    let h = host();
+    let mut dev = Devices {
+        speaker: None,
+        mic: None,
+        ring: None,
+        spk_buf: Arc::new(Mutex::new(VecDeque::new())),
+        mic_buf: Arc::new(Mutex::new(VecDeque::new())),
+        ring_state: Arc::new(Mutex::new(RingPlayer { samples: Arc::new(Vec::new()), pos: 0, gain: 1.0 })),
+        idle_since: None,
+        cfg_version: 0,
+    };
+    let mut apm: Option<sonora::AudioProcessing> = None;
+    let mut next = Instant::now();
+    let mut acc = vec![0i32; FRAME];
+    let mut call_audio: Vec<Vec<i32>> = Vec::new();
+    let null_audio = st.lock().unwrap_or_else(|e| e.into_inner()).null_audio;
+    let mut tone_pos: u64 = 0;
+    let tone_hz: f32 = std::env::var("MEGASIP_TEST_TONE_HZ").ok().and_then(|v| v.parse().ok()).unwrap_or(1000.0);
+    loop {
+        next += Duration::from_millis(20);
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        } else if now - next > Duration::from_millis(200) {
+            next = now;
+        }
+
+        let (streams, conference, mute, cfg, ring, ringtone, cfg_version) = {
+            let g = st.lock().unwrap_or_else(|e| e.into_inner());
+            (g.streams.clone(), g.conference, g.mute, g.cfg.clone(), g.ring, g.ringtone.clone(), g.cfg_version)
+        };
+
+        // Device changes: reopen everything.
+        if cfg_version != dev.cfg_version {
+            dev.speaker = None;
+            dev.mic = None;
+            dev.ring = None;
+            dev.cfg_version = cfg_version;
+        }
+
+        // Ring device.
+        let want_ring = ring == Ring::Ringtone;
+        if want_ring && dev.ring.is_none() {
+            {
+                let mut rs = dev.ring_state.lock().unwrap_or_else(|e| e.into_inner());
+                rs.samples = ringtone.clone();
+                rs.pos = 0;
+            }
+            if let Some(d) = find_device(&h, &cfg.ring_device, false) {
+                let rs = dev.ring_state.clone();
+                match open_output(&d, move |out| {
+                    let mut r = rs.lock().unwrap_or_else(|e| e.into_inner());
+                    let n = r.samples.len();
+                    for o in out.iter_mut() {
+                        *o = if n == 0 {
+                            0.0
+                        } else {
+                            let s = r.samples[r.pos % n] as f32 / 32768.0 * r.gain;
+                            r.pos = (r.pos + 1) % n;
+                            s
+                        };
+                    }
+                }) {
+                    Ok(s) => dev.ring = Some(s),
+                    Err(e) => st.lock().unwrap_or_else(|e| e.into_inner()).errors.push(format!("Ring device: {e}")),
+                }
+            }
+        } else if !want_ring && dev.ring.is_some() {
+            dev.ring = None;
+        }
+        dev.ring_state.lock().unwrap_or_else(|e| e.into_inner()).gain = cfg.ring_volume as f32 / 100.0;
+
+        let has_tone = st.lock().unwrap_or_else(|e| e.into_inner()).tone.is_some() || ring == Ring::Waiting;
+        let has_local = !st.lock().unwrap_or_else(|e| e.into_inner()).local.is_empty();
+        let need = !streams.is_empty() || has_tone || has_local;
+        let need_mic = !streams.is_empty();
+
+        if need {
+            dev.idle_since = None;
+        } else if dev.speaker.is_some() || dev.mic.is_some() {
+            let since = *dev.idle_since.get_or_insert(now);
+            if now - since > Duration::from_secs(2) {
+                dev.speaker = None;
+                dev.mic = None;
+                apm = None;
+                dev.spk_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            }
+        }
+        if !need && dev.speaker.is_none() {
+            continue;
+        }
+        if null_audio {
+            // fall through without devices
+        } else if dev.speaker.is_none() {
+            if let Some(d) = find_device(&h, &cfg.speaker, false) {
+                let b = dev.spk_buf.clone();
+                match open_output(&d, move |out| {
+                    let mut q = b.lock().unwrap_or_else(|e| e.into_inner());
+                    for o in out.iter_mut() {
+                        *o = q.pop_front().map(|s| s as f32 / 32768.0).unwrap_or(0.0);
+                    }
+                }) {
+                    Ok(s) => dev.speaker = Some(s),
+                    Err(e) => st.lock().unwrap_or_else(|e| e.into_inner()).errors.push(format!("Speaker: {e}")),
+                }
+            }
+        }
+        // The microphone is only open while there is a call, so Plasma's mic indicator
+        // tells the truth.
+        if null_audio {
+        } else if need_mic && dev.mic.is_none() {
+            if let Some(d) = find_device(&h, &cfg.microphone, true) {
+                dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                match open_input(&d, dev.mic_buf.clone()) {
+                    Ok(s) => dev.mic = Some(s),
+                    Err(e) => st.lock().unwrap_or_else(|e| e.into_inner()).errors.push(format!("Microphone: {e}")),
+                }
+            }
+        } else if !need_mic && dev.mic.is_some() {
+            dev.mic = None;
+            dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+
+        // 1. Received audio per call.
+        call_audio.resize_with(streams.len(), || vec![0i32; FRAME]);
+        for (i, s) in streams.iter().enumerate() {
+            call_audio[i].iter_mut().for_each(|v| *v = 0);
+            s.pull(&mut call_audio[i]);
+        }
+
+        // 2. Speaker mix.
+        acc.iter_mut().for_each(|v| *v = 0);
+        for (i, s) in streams.iter().enumerate() {
+            if s.playing() {
+                for (a, v) in acc.iter_mut().zip(&call_audio[i]) {
+                    *a += *v;
+                }
+            }
+        }
+        {
+            let mut g = st.lock().unwrap_or_else(|e| e.into_inner());
+            if ring == Ring::Waiting {
+                if !matches!(g.tone.as_ref().map(|t| t.kind()), Some(Tone::Waiting)) {
+                    g.tone = Some(ToneGen::new(Tone::Waiting));
+                }
+            } else if matches!(g.tone.as_ref().map(|t| t.kind()), Some(Tone::Waiting)) {
+                g.tone = None;
+            }
+            if let Some(t) = g.tone.as_mut() {
+                t.fill(&mut acc);
+            }
+            for a in acc.iter_mut() {
+                match g.local.pop_front() {
+                    Some(s) => *a += s as i32,
+                    None => break,
+                }
+            }
+        }
+        let sv = cfg.speaker_volume as f32 / 100.0;
+        let spk: Vec<i16> = acc.iter().map(|&v| dsp::clamp16(v as f32 * sv)).collect();
+        {
+            let mut q = dev.spk_buf.lock().unwrap_or_else(|e| e.into_inner());
+            q.extend(spk.iter().copied());
+            let max = 48 * 160;
+            if q.len() > max {
+                let extra = q.len() - 48 * 60;
+                q.drain(..extra);
+            }
+        }
+
+        // 3. Microphone.
+        let mut mic = vec![0i16; FRAME];
+        {
+            let mut q = dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner());
+            if q.len() > 48 * 100 {
+                let extra = q.len() - 48 * 40;
+                q.drain(..extra);
+            }
+            let n = FRAME.min(q.len());
+            for (m, s) in mic.iter_mut().zip(q.drain(..n)) {
+                *m = s;
+            }
+        }
+        if null_audio {
+            for m in mic.iter_mut() {
+                *m = ((tone_pos as f32 * 2.0 * std::f32::consts::PI * tone_hz / 48_000.0).sin() * 8000.0) as i16;
+                tone_pos += 1;
+            }
+            dev.spk_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        let mv = cfg.mic_volume as f32 / 100.0;
+        if (mv - 1.0).abs() > 0.01 {
+            for m in mic.iter_mut() {
+                *m = dsp::clamp16(*m as f32 * mv);
+            }
+        }
+        if cfg.echo_cancellation && !streams.is_empty() {
+            let a = apm.get_or_insert_with(make_apm);
+            let mut tmp = [0i16; 480];
+            for k in 0..2 {
+                let r = &spk[k * 480..(k + 1) * 480];
+                let _ = a.process_render_i16(r, &mut tmp);
+                let c: Vec<i16> = mic[k * 480..(k + 1) * 480].to_vec();
+                let _ = a.process_capture_i16(&c, &mut mic[k * 480..(k + 1) * 480]);
+            }
+        }
+        {
+            let mut g = st.lock().unwrap_or_else(|e| e.into_inner());
+            g.mic_level = if mute { 0.0 } else { level(&mic) };
+            g.spk_level = level(&spk);
+            let zc = spk.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+            g.spk_freq = zc as f32 * 50.0 / 2.0;
+        }
+        if mute {
+            mic.iter_mut().for_each(|m| *m = 0);
+        }
+
+        // 4. Send to every call; in a conference each call also hears the others.
+        for (i, s) in streams.iter().enumerate() {
+            if !s.sending() {
+                s.push(&mic); // keeps timestamps moving; push() drops it
+                continue;
+            }
+            if conference && streams.len() > 1 {
+                let mut out: Vec<i32> = mic.iter().map(|&m| m as i32).collect();
+                for (j, other) in streams.iter().enumerate() {
+                    if j != i && other.playing() {
+                        for (o, v) in out.iter_mut().zip(&call_audio[j]) {
+                            *o += *v;
+                        }
+                    }
+                }
+                let frame: Vec<i16> = out.iter().map(|&v| dsp::clamp16(v as f32)).collect();
+                s.push(&frame);
+            } else {
+                s.push(&mic);
+            }
+        }
+    }
+}

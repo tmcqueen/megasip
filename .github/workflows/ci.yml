@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  build:
+    name: clippy, build, test
+    runs-on: ubuntu-latest
+    # The runner image (Ubuntu 24.04) has no KDE Frameworks 6 packages and only
+    # Qt 6.4, so build inside Ubuntu 26.04, which ships KF6 and Qt 6.10.
+    container: ubuntu:26.04
+    steps:
+      - name: Install system packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git \
+            build-essential pkg-config clang lld \
+            qt6-base-dev qt6-declarative-dev libkf6i18n-dev libasound2-dev
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --locked
+      - name: Test
+        run: cargo test --locked

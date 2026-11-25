@@ -475,6 +475,7 @@ impl qobject::Phone {
             s = crate::config::merge_settings(&base, &s, &disk);
             s.normalize();
         }
+        s.validate()?;
         s.save()?;
         self.as_mut().configure_with(s.clone());
         crate::logging::apply(&s);
@@ -501,6 +502,10 @@ impl qobject::Phone {
         if !still {
             self.deactivate_account();
         }
+    }
+
+    fn account_short_name(&self, id: &str) -> String {
+        self.rust().settings.accounts.iter().find(|a| a.id == id).map(|a| a.short_name.clone()).unwrap_or_else(|| id.to_string())
     }
 
     fn account_title(&self, id: &str) -> String {
@@ -530,7 +535,7 @@ impl qobject::Phone {
         }
         self.as_mut().rust_mut().active = Some(id.to_string());
         self.as_mut().set_active_account(qs(id));
-        crate::logging::set_log_name(Some(&title));
+        crate::logging::set_log_name(Some(&self.account_short_name(id)));
         let s = self.rust().settings.clone();
         self.as_mut().configure_with(s);
         self.as_mut().set_missed_count(0);

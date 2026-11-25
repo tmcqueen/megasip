@@ -85,3 +85,13 @@ the microphone. It can be combined with `-a`. The calls below are mine:
 - A start with `--source` always opens its own window. It is never handed to a running one,
   because that window already has its own input.
 - `--cli` accepts `--source` too (as decided).
+
+## Addendum: display name and short name (as decided)
+
+An account has a **display name** (the existing `label`), which is what the UI shows, and a
+**short name** (`shortName`), which is what `-a` matches. A short name is one or more of
+`[0-9A-Za-z-_.@]`, unique ignoring case, and checked on Save. `-a` matches the short name
+(any case), then the internal id; it no longer matches the label or user@domain. Accounts
+saved before this get a short name made from their display name (or username), made
+unique with `-2`, `-3`…, and written back. Log files are named after the short name. The
+SIP "Display name" field is renamed "Caller ID name" so the two names aren't confused.

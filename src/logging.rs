@@ -366,9 +366,9 @@ fn file_names() -> (String, String) {
     }
 }
 
-/// "Work Line" -> "work-line".
+/// A file-name-safe form of the account's short name ("Work Line" -> "Work-Line").
 fn slug(label: &str) -> String {
-    let s: String = label.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let s: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || "_.@".contains(c) { c } else { '-' }).collect();
     let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
     if s.is_empty() { "account".into() } else { s }
 }
@@ -394,8 +394,9 @@ pub fn set_log_name(account: Option<&str>) {
 mod name_tests {
     #[test]
     fn slugs() {
-        assert_eq!(super::slug("Work Line"), "work-line");
-        assert_eq!(super::slug("alice@ex.com"), "alice-ex-com");
+        assert_eq!(super::slug("Work Line"), "Work-Line");
+        assert_eq!(super::slug("alice@ex.com"), "alice@ex.com");
+        assert_eq!(super::slug("../x"), "..-x");
         assert_eq!(super::slug("  "), "account");
     }
 }

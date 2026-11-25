@@ -28,7 +28,7 @@ const HELP: &str = "MegaSIP — SIP softphone
 
 Usage:
   megasip                       open a window with no account active
-  megasip -a, --account <name>  open a window with that account active (label, id or user@domain);
+  megasip -a, --account <name>  open a window with that account active (its short name);
                                 if another window already has it, that window comes to the front
   megasip --source <what>       send <what> instead of the microphone: a .wav, .ogg or .mp3 file,
                                 milli (1004 Hz test tone), pink, white (noise) or tone:<hz>
@@ -96,7 +96,7 @@ fn main() {
             Ok(Err(pid)) => fail(&format!("{} is already active (pid {pid})", acc.title())),
             Err(e) => fail(&format!("can't lock the account: {e}")),
         }
-        logging::set_log_name(Some(&acc.title()));
+        logging::set_log_name(Some(&acc.short_name));
         cli::run(settings, acc.id, c);
         return;
     }

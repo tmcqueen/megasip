@@ -66,6 +66,11 @@ account from the tray menu or the account button at the top of the window:
 - Accounts active in another window are greyed out.
 - **Deactivate** gives the window's account up again.
 
+Each account has a **display name**, shown in MegaSIP ("Telnyx - Tim McQueen"), and a
+**short name** for the command line (`megasip -a telnyx-tim`). Short names use letters,
+digits and `- _ . @`, and no two accounts can share one. Accounts without a short name get
+one made from their display name.
+
 Each window's **Calls** tab shows only its own account's history. Its logs go to
 `sip-<account>.log` and `audio-<account>.log`.
 
@@ -73,7 +78,7 @@ From the command line:
 
 ```sh
 megasip                         # a window with no account active (or the idle one, raised)
-megasip -a work                 # a window with the account "work" active (label, id or user@domain);
+megasip -a work                 # a window with the account whose short name is "work";
                                 # if another window has it, that window comes to the front
 megasip -a work 1002            # ...and call 1002 once it's registered
 megasip 1002                    # call from the window with the default account (or sip:…, tel:…)

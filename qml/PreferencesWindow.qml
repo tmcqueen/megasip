@@ -246,7 +246,7 @@ QQC2.ApplicationWindow {
             spacing: 0
             PrefSection {
                 title: "Your accounts"
-                description: "Calls go out on the default account. Incoming calls ring on all of them."
+                description: "Each window has one account active: pick it from the tray or the account button. The default account is the one desktop call links use."
                 Repeater {
                     model: win.draft.accounts ? win.draft.accounts.length : 0
                     delegate: QQC2.ItemDelegate {
@@ -339,21 +339,33 @@ QQC2.ApplicationWindow {
                             }
                         }
                         PrefField {
-                            label: "Display name"
+                            label: "Account display name"
+                            hint: "Shown in MegaSIP, e.g. Telnyx - Tim McQueen"
+                            QQC2.TextField {
+                                Layout.fillWidth: true
+                                text: win.acc() ? win.acc().label || "" : ""
+                                onTextEdited: win.setAcc("label", text)
+                            }
+                        }
+                        PrefField {
+                            label: "Short name"
+                            hint: "For the command line: megasip -a " + (win.acc() && win.acc().shortName ? win.acc().shortName : "<short name>")
+                                  + ". Letters, digits and - _ . @; made from the display name if left empty."
+                            QQC2.TextField {
+                                Layout.fillWidth: true
+                                placeholderText: "e.g. telnyx-tim"
+                                validator: RegularExpressionValidator { regularExpression: /[0-9A-Za-z_.@-]*/ }
+                                text: win.acc() ? win.acc().shortName || "" : ""
+                                onTextEdited: win.setAcc("shortName", text)
+                            }
+                        }
+                        PrefField {
+                            label: "Caller ID name"
                             hint: "Shown to the people you call"
                             QQC2.TextField {
                                 Layout.fillWidth: true
                                 text: win.acc() ? win.acc().displayName || "" : ""
                                 onTextEdited: win.setAcc("displayName", text)
-                            }
-                        }
-                        PrefField {
-                            label: "Account name"
-                            hint: "Optional, e.g. Work"
-                            QQC2.TextField {
-                                Layout.fillWidth: true
-                                text: win.acc() ? win.acc().label || "" : ""
-                                onTextEdited: win.setAcc("label", text)
                             }
                         }
                     }

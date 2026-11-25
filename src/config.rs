@@ -7,7 +7,10 @@ use std::path::PathBuf;
 #[serde(default, rename_all = "camelCase")]
 pub struct Account {
     pub id: String,
+    /// What the UI shows ("Telnyx - Tim McQueen").
     pub label: String,
+    /// What the command line uses (`megasip -a telnyx-tim`): letters, digits, - _ . @
+    pub short_name: String,
     pub enabled: bool,
     pub server: String,
     pub proxy: String,
@@ -36,6 +39,7 @@ impl Default for Account {
         Account {
             id: String::new(),
             label: String::new(),
+            short_name: String::new(),
             enabled: true,
             server: String::new(),
             proxy: String::new(),
@@ -226,14 +230,33 @@ impl Settings {
         s
     }
 
-    /// The enabled account a command line names: by label (any case), id, or user@domain.
+    /// The enabled account a command line names: by short name (any case), else id.
     pub fn find_account(&self, name: &str) -> Option<&Account> {
         let name = name.trim();
         let usable = || self.accounts.iter().filter(|a| a.enabled && !a.server.trim().is_empty());
         usable()
-            .find(|a| a.label.trim().eq_ignore_ascii_case(name))
+            .find(|a| a.short_name.eq_ignore_ascii_case(name))
             .or_else(|| usable().find(|a| a.id == name))
-            .or_else(|| usable().find(|a| format!("{}@{}", a.username, a.sip_domain()).eq_ignore_ascii_case(name)))
+    }
+
+    /// Checks before saving: every short name valid and used once.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut seen: Vec<String> = Vec::new();
+        for a in &self.accounts {
+            if !valid_short_name(&a.short_name) {
+                return Err(format!(
+                    "{}: short name \"{}\" can only use letters, digits and - _ . @",
+                    a.title(),
+                    a.short_name
+                ));
+            }
+            let lower = a.short_name.to_ascii_lowercase();
+            if seen.contains(&lower) {
+                return Err(format!("The short name \"{}\" is used by two accounts", a.short_name));
+            }
+            seen.push(lower);
+        }
+        Ok(())
     }
 
     /// What the engine of a window gets: only its active account is enabled.
@@ -250,7 +273,12 @@ impl Settings {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
+        let unnamed = s.accounts.iter().any(|a| a.short_name.is_empty());
         s.normalize();
+        if unnamed {
+            // Keep the short names just made up, so they don't change with the display name.
+            let _ = s.write_file();
+        }
         if !crate::secrets::disabled() {
             s.load_passwords();
         }
@@ -309,6 +337,23 @@ impl Settings {
             if a.register_refresh == 0 {
                 a.register_refresh = 300;
             }
+        }
+        // Accounts from before short names existed get one made from their name.
+        for i in 0..self.accounts.len() {
+            if !self.accounts[i].short_name.is_empty() {
+                continue;
+            }
+            let a = &self.accounts[i];
+            let src = if a.label.trim().is_empty() { a.username.clone() } else { a.label.clone() };
+            let base = short_name_from(&src);
+            let taken = |n: &str| self.accounts.iter().any(|o| o.short_name.eq_ignore_ascii_case(n));
+            let mut name = base.clone();
+            let mut k = 2;
+            while taken(&name) {
+                name = format!("{base}-{k}");
+                k += 1;
+            }
+            self.accounts[i].short_name = name;
         }
         if !self.accounts.iter().any(|a| a.id == self.default_account) {
             self.default_account = self.accounts.first().map(|a| a.id.clone()).unwrap_or_default();
@@ -384,6 +429,22 @@ fn already_stored(id: &str, password: &str) -> bool {
     g.as_ref().and_then(|m| m.get(id)).is_some_and(|p| p == password)
 }
 
+/// Letters, digits and - _ . @ only (no spaces), so it can be typed after `-a`.
+pub fn valid_short_name(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.@".contains(c))
+}
+
+/// "Telnyx - Tim McQueen" -> "telnyx-tim-mcqueen".
+fn short_name_from(s: &str) -> String {
+    let mapped: String = s
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || "_.@".contains(c) { c } else { '-' })
+        .collect();
+    let joined = mapped.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    if joined.is_empty() { "account".into() } else { joined }
+}
+
 /// Three-way merge for windows sharing settings.json: what this window changed (`base` ->
 /// `mine`) applied on top of what is on disk now (`theirs`). Top-level settings merge per
 /// field and accounts per account, so a save never undoes another window's edits.
@@ -442,12 +503,40 @@ mod tests {
 
     #[test]
     fn find_account() {
-        let s = two();
-        for n in ["work", "w1", "ALICE@ex.com", " Work "] {
+        let mut s = two();
+        s.normalize();
+        // By short name (any case) or id; not by the display name.
+        s.accounts[0].short_name = "telnyx-tim".into();
+        s.accounts[0].label = "Telnyx - Tim McQueen".into();
+        for n in ["telnyx-tim", "TELNYX-TIM", "w1", " telnyx-tim "] {
             assert_eq!(s.find_account(n).map(|a| a.id.as_str()), Some("w1"), "{n}");
         }
-        assert!(s.find_account("Home").is_none(), "disabled");
+        assert!(s.find_account("Telnyx - Tim McQueen").is_none());
+        assert!(s.find_account("home").is_none(), "disabled");
         assert!(s.find_account("nope").is_none());
+    }
+
+    #[test]
+    fn short_names() {
+        for ok in ["work", "Tim.McQueen", "a_b-c", "tim@telnyx", "007"] {
+            assert!(valid_short_name(ok), "{ok}");
+        }
+        for bad in ["", "two words", "tim/x", "é", "a:b"] {
+            assert!(!valid_short_name(bad), "{bad:?}");
+        }
+        // Missing short names are made up from the display name, unique.
+        let mut s = two();
+        s.accounts[0].label = "Telnyx - Tim McQueen".into();
+        s.accounts[2].label = "Telnyx - Tim McQueen".into();
+        s.normalize();
+        let names: Vec<&str> = s.accounts.iter().map(|a| a.short_name.as_str()).collect();
+        assert_eq!(names, vec!["telnyx-tim-mcqueen", "home", "telnyx-tim-mcqueen-2"]);
+        assert!(s.validate().is_ok());
+        // Saving checks them.
+        s.accounts[1].short_name = "Telnyx-Tim-McQueen".into();
+        assert!(s.validate().unwrap_err().contains("used by two accounts"));
+        s.accounts[1].short_name = "home line".into();
+        assert!(s.validate().unwrap_err().contains("home line"));
     }
 
     #[test]

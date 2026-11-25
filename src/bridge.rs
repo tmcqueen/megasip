@@ -115,6 +115,18 @@ pub mod qobject {
         fn pick_account(self: Pin<&mut Phone>, id: &QString);
         #[qinvokable]
         fn deactivate_account(self: Pin<&mut Phone>);
+        /// The file:// URL of an account icon (written if needed), "" if it can't be.
+        #[qinvokable]
+        fn account_icon(
+            self: &Phone,
+            icon: &QString,
+            color: &QString,
+            name: &QString,
+            dim: bool,
+        ) -> QString;
+        /// The glyphs an account icon can use, as JSON [{key, name}].
+        #[qinvokable]
+        fn account_icon_glyphs(self: &Phone) -> QString;
 
         #[qsignal]
         fn incoming_call(self: Pin<&mut Phone>, id: i64, name: QString, number: QString);
@@ -633,7 +645,20 @@ impl qobject::Phone {
         self.as_mut().set_auto_answer(aa);
         self.as_mut().publish_settings();
         self.as_mut().drop_vanished_account();
+        self.refresh_identity();
+        crate::accounticon::prune(&self.rust().settings.accounts);
         Ok(())
+    }
+
+    /// Show this window as its account in the taskbar and tray (or as MegaSIP).
+    fn refresh_identity(&self) {
+        let r = self.rust();
+        let acc = r
+            .active
+            .as_ref()
+            .and_then(|id| r.settings.accounts.iter().find(|a| &a.id == id));
+        let identity = crate::accounticon::identity_for(acc);
+        crate::appcpp::ffi::set_app_identity(&identity.app_id, &identity.icon_str());
     }
 
     /// Hand the engine `s` with only this window's account enabled.
@@ -713,6 +738,7 @@ impl qobject::Phone {
         self.as_mut().set_missed_count(0);
         self.as_mut().load_history();
         self.as_mut().update_status();
+        self.refresh_identity();
     }
 
     /// Start-up requests from the command line: the `-a` account, then a number to dial.
@@ -720,6 +746,10 @@ impl qobject::Phone {
         tracing::debug!("start_up: account {account:?} dial {dial:?}");
         if let Some(id) = &account {
             self.as_mut().activate(id);
+            if self.rust().active.is_none() {
+                // The window started out as that account; it didn't get it after all.
+                self.refresh_identity();
+            }
         }
         let Some(d) = dial else { return };
         if account.is_some() {
@@ -817,6 +847,7 @@ impl qobject::Phone {
                 self.as_mut().publish_settings();
                 self.as_mut().drop_vanished_account();
                 self.as_mut().update_status();
+                self.refresh_identity();
             }
         }
         if contacts {
@@ -1227,6 +1258,29 @@ impl qobject::Phone {
         self.as_mut().set_missed_count(0);
         self.as_mut().load_history();
         self.as_mut().update_status();
+        self.refresh_identity();
+    }
+
+    fn account_icon(&self, icon: &QString, color: &QString, name: &QString, dim: bool) -> QString {
+        let icon = icon.to_string();
+        if !crate::accounticon::is_glyph(&icon) {
+            return QString::default();
+        }
+        match crate::accounticon::write_icon(&icon, &color.to_string(), &name.to_string(), dim) {
+            Ok(p) => qs(&crate::accounticon::file_url(&p)),
+            Err(e) => {
+                tracing::warn!("couldn't write an account icon: {e}");
+                QString::default()
+            }
+        }
+    }
+
+    fn account_icon_glyphs(&self) -> QString {
+        let list: Vec<serde_json::Value> = crate::accounticon::GLYPHS
+            .iter()
+            .map(|(k, n)| serde_json::json!({ "key": k, "name": n }))
+            .collect();
+        qs(&serde_json::Value::Array(list).to_string())
     }
 
     fn quit(self: Pin<&mut Self>) {

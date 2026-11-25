@@ -33,6 +33,18 @@ QQC2.ApplicationWindow {
     property bool forceClose: false
     signal debugRequested()
 
+    readonly property var iconGlyphs: JSON.parse(phone.accountIconGlyphs())
+    readonly property string defaultIconColor: "#1d99f3"
+    readonly property var iconColors: [
+        { name: "Blue", color: "#1d99f3" },
+        { name: "Teal", color: "#16a085" },
+        { name: "Green", color: "#27ae60" },
+        { name: "Orange", color: "#f67400" },
+        { name: "Red", color: "#da4453" },
+        { name: "Pink", color: "#e93a9a" },
+        { name: "Purple", color: "#9b59b6" },
+        { name: "Gray", color: "#7f8c8d" }
+    ]
     readonly property var logLevels: ["off", "error", "warn", "info", "debug", "trace"]
     readonly property var logLevelNames: ["Off", "Errors", "Warnings", "Info", "Debug", "Trace"]
     readonly property var pages: [
@@ -258,6 +270,14 @@ QQC2.ApplicationWindow {
                         highlighted: index === win.selAcc
                         onClicked: { win.selAcc = index; win.version++ }
                         contentItem: RowLayout {
+                            Image {
+                                visible: !!accRow.a.icon
+                                source: accRow.a.icon ? win.phone.accountIcon(accRow.a.icon, accRow.a.iconColor || "", win.accTitle(accRow.a), false) : ""
+                                sourceSize.width: Kirigami.Units.iconSizes.smallMedium
+                                sourceSize.height: Kirigami.Units.iconSizes.smallMedium
+                                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                            }
                             Rectangle {
                                 implicitWidth: Kirigami.Units.gridUnit * 0.6
                                 implicitHeight: implicitWidth
@@ -386,6 +406,108 @@ QQC2.ApplicationWindow {
                             icon.name: "edit-delete-remove"
                             onClicked: confirmDelete.open()
                         }
+                    }
+                }
+
+                PrefSection {
+                    id: iconSection
+                    title: "Icon"
+                    description: "Shown in the taskbar and the tray while this account is active, so its window is easy to tell apart from the others."
+                    // Kept here rather than read back from the draft, so picking one doesn't
+                    // rebuild the page.
+                    property string glyph: win.acc() ? win.acc().icon || "" : ""
+                    property string tint: win.acc() && win.acc().iconColor ? win.acc().iconColor : win.defaultIconColor
+                    function pick(g, c) {
+                        glyph = g
+                        tint = c
+                        win.setAcc("icon", g)
+                        win.setAcc("iconColor", g ? c : "")
+                    }
+
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+                        QQC2.ToolButton {
+                            checkable: true
+                            checked: iconSection.glyph === ""
+                            display: QQC2.AbstractButton.TextBesideIcon
+                            text: "MegaSIP's own"
+                            icon.name: "org.megasip.MegaSIP"
+                            icon.width: Kirigami.Units.iconSizes.medium
+                            icon.height: Kirigami.Units.iconSizes.medium
+                            onClicked: iconSection.pick("", iconSection.tint)
+                            QQC2.ToolTip.text: "No icon of its own: shown like any other MegaSIP window"
+                            QQC2.ToolTip.visible: hovered
+                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                        }
+                        Repeater {
+                            model: win.iconGlyphs
+                            delegate: QQC2.ToolButton {
+                                required property var modelData
+                                checkable: true
+                                checked: iconSection.glyph === modelData.key
+                                display: QQC2.AbstractButton.IconOnly
+                                text: modelData.name
+                                icon.source: win.phone.accountIcon(modelData.key, iconSection.tint, win.accTitle(win.acc()), false)
+                                icon.color: "transparent"
+                                icon.width: Kirigami.Units.iconSizes.medium
+                                icon.height: Kirigami.Units.iconSizes.medium
+                                onClicked: iconSection.pick(modelData.key, iconSection.tint)
+                                QQC2.ToolTip.text: modelData.name
+                                QQC2.ToolTip.visible: hovered
+                                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                            }
+                        }
+                    }
+                    PrefField {
+                        label: "Color"
+                        Repeater {
+                            model: win.iconColors
+                            delegate: QQC2.AbstractButton {
+                                id: swatch
+                                required property var modelData
+                                implicitWidth: Kirigami.Units.iconSizes.medium
+                                implicitHeight: implicitWidth
+                                text: modelData.name
+                                Accessible.name: modelData.name
+                                onClicked: iconSection.pick(iconSection.glyph || "phone", modelData.color)
+                                QQC2.ToolTip.text: modelData.name
+                                QQC2.ToolTip.visible: hovered
+                                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                                contentItem: Item {}
+                                background: Rectangle {
+                                    radius: width / 2
+                                    color: swatch.modelData.color
+                                    border.width: iconSection.tint.toLowerCase() === swatch.modelData.color ? 3 : 1
+                                    border.color: iconSection.tint.toLowerCase() === swatch.modelData.color
+                                                  ? Kirigami.Theme.highlightColor : Qt.rgba(0, 0, 0, 0.25)
+                                }
+                            }
+                        }
+                        QQC2.Button {
+                            text: "Custom…"
+                            icon.name: "color-picker"
+                            onClicked: {
+                                colorDialog.selectedColor = iconSection.tint
+                                colorDialog.open()
+                            }
+                        }
+                        Dialogs.ColorDialog {
+                            id: colorDialog
+                            title: "Icon color"
+                            onAccepted: {
+                                const c = selectedColor
+                                const hex = v => Math.round(v * 255).toString(16).padStart(2, "0")
+                                iconSection.pick(iconSection.glyph || "phone", "#" + hex(c.r) + hex(c.g) + hex(c.b))
+                            }
+                        }
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: "A color on its own picks the phone icon. The taskbar and tray change when you save; a window with this account active closes and reopens for a moment to pick it up."
+                        wrapMode: Text.WordWrap
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
                     }
                 }
 
@@ -860,7 +982,7 @@ QQC2.ApplicationWindow {
                     hint: "Some providers want a specific one. Leave empty for MegaSIP's."
                     QQC2.TextField {
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 18
-                        placeholderText: "MegaSIP/0.2.0"
+                        placeholderText: "MegaSIP/0.3.0"
                         text: win.draft.userAgent || ""
                         onTextEdited: win.set("userAgent", text)
                     }

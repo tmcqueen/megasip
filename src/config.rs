@@ -32,6 +32,11 @@ pub struct Account {
     pub keep_alive: u32,
     pub allow_rewrite: bool,
     pub disable_session_timer: bool,
+    /// The taskbar and tray icon while this account is active: "" (MegaSIP's own) or a
+    /// glyph from `accounticon::GLYPHS`.
+    pub icon: String,
+    /// The icon's colour, "#rrggbb" ("" for the default).
+    pub icon_color: String,
 }
 
 impl Default for Account {
@@ -58,6 +63,8 @@ impl Default for Account {
             keep_alive: 15,
             allow_rewrite: true,
             disable_session_timer: false,
+            icon: String::new(),
+            icon_color: String::new(),
         }
     }
 }
@@ -348,6 +355,10 @@ impl Settings {
             if a.register_refresh == 0 {
                 a.register_refresh = 300;
             }
+            if !crate::accounticon::is_glyph(&a.icon) {
+                a.icon.clear();
+            }
+            a.icon_color = crate::accounticon::valid_color(&a.icon_color).unwrap_or_default();
         }
         // Accounts from before short names existed get one made from their name.
         for i in 0..self.accounts.len() {
@@ -660,5 +671,22 @@ mod tests {
             s.for_engine(Some("h1")).accounts.iter().all(|a| !a.enabled),
             "a disabled account stays off"
         );
+    }
+
+    #[test]
+    fn icon_fields_are_checked() {
+        let mut s = two();
+        s.accounts[0].icon = "headset".into();
+        s.accounts[0].icon_color = "#ABC".into();
+        s.accounts[1].icon = "no-such-glyph".into();
+        s.accounts[1].icon_color = "red".into();
+        s.normalize();
+        assert_eq!(s.accounts[0].icon, "headset");
+        assert_eq!(s.accounts[0].icon_color, "#aabbcc");
+        assert_eq!(s.accounts[1].icon, "");
+        assert_eq!(s.accounts[1].icon_color, "");
+        // Settings from before icons existed load with none.
+        let old: Account = serde_json::from_str(r#"{"id":"x","label":"Old"}"#).unwrap();
+        assert_eq!((old.icon.as_str(), old.icon_color.as_str()), ("", ""));
     }
 }

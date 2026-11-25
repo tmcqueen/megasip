@@ -101,6 +101,28 @@ one made from their display name.
 Each window's **Calls** tab shows only its own account's history. Its logs go to
 `sip-<account>.log` and `audio-<account>.log`.
 
+### Telling account windows apart
+
+An account can have its own **icon** (Preferences → Accounts → Icon): a phone, headset,
+home, briefcase, building, person, star, globe or the first letter of its name, in white
+on a badge of any color. While the account is active, its window shows that icon in the
+taskbar and the tray. The tray fades it while the account isn't registered and still
+switches to the missed-call icon when there is one. Accounts without an icon look like
+MegaSIP.
+
+On Wayland the taskbar (Plasma's and GNOME's) takes a window's icon from the `.desktop` file
+that matches the window's app_id, not from the window. So a window whose account has an
+icon uses its own app_id, `org.megasip.MegaSIP.acct_<id>`, and MegaSIP writes a hidden
+`.desktop` file of that name to `~/.local/share/applications/` with the badge from
+`~/.local/share/megasip/icons/`. MegaSIP removes those files again when the icon is turned
+off or the account deleted. Two things follow from it:
+
+- Those windows are no longer grouped with MegaSIP's own launcher in the taskbar. A
+  launcher pinned from one of them opens that account (`megasip -a <account>`).
+- A window can only change its app_id by being shown again, so when its account's icon
+  changes (or an idle window activates an account with an icon), it closes and reopens
+  for a moment.
+
 From the command line:
 
 ```sh

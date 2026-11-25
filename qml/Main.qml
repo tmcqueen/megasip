@@ -133,12 +133,21 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // The active account's own icon, if it has one: faded while it isn't registered.
+    readonly property bool registered: root.accounts.some(a => a.state === "registered")
+    readonly property string accountIcon: root.activeAcc && root.activeAcc.icon
+        ? phone.accountIcon(root.activeAcc.icon, root.activeAcc.iconColor || "", root.accTitle(root.activeAcc),
+                            !root.registered && root.calls.length === 0)
+        : ""
     Platform.SystemTrayIcon {
         id: tray
         visible: true
+        // A missed call still shows as one; otherwise the account's icon wins.
+        icon.source: phone.missedCount > 0 ? "" : root.accountIcon
         icon.name: phone.missedCount > 0 ? "call-missed"
+                 : root.accountIcon ? ""
                  : root.calls.length > 0 ? "call-start"
-                 : root.accounts.some(a => a.state === "registered") ? "call-start-symbolic" : "call-stop"
+                 : root.registered ? "call-start-symbolic" : "call-stop"
         tooltip: "MegaSIP — " + (root.activeAcc ? root.accTitle(root.activeAcc) + ": " : "") + phone.statusText + (phone.sourceLabel ? " · playing " + phone.sourceLabel : "")
         onActivated: reason => {
             if (reason === Platform.SystemTrayIcon.Trigger) root.toggle()

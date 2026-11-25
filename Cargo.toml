@@ -1,6 +1,6 @@
 [package]
 name = "megasip"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A KDE/Wayland voice-only port of the MicroSIP softphone"
 license = "GPL-2.0-or-later"

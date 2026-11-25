@@ -39,6 +39,7 @@ Usage:
   megasip --hangup              hang up all calls
   megasip --quit                quit every MegaSIP window
   megasip --cli -a <name>       no window: commands on stdin, events as JSON on stdout
+  megasip --debug               log at debug level to stdout (command line, hand-off, window)
 
 Environment: MEGASIP_LOG=debug for SIP traces on stderr, MEGASIP_AUDIO_LOG=info for audio.";
 
@@ -54,6 +55,7 @@ fn main() {
     let mut account: Option<String> = None;
     let mut source: Option<String> = None;
     let mut request: Option<String> = None;
+    let mut debug = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |flag: &str| {
@@ -67,6 +69,7 @@ fn main() {
                 return;
             }
             "--cli" => cli_mode = true,
+            "--debug" => debug = true,
             "--minimized" | "-m" => minimized = true,
             "-a" | "--account" => account = Some(value("--account")),
             "--source" => source = Some(value("--source")),
@@ -89,7 +92,38 @@ fn main() {
     }
 
     let settings = config::Settings::load();
+    if debug {
+        logging::enable_debug_stdout();
+        logging::init(&settings);
+        tracing::debug!(
+            "megasip {} pid {} args {args:?}",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id()
+        );
+        tracing::debug!(
+            "parsed: account={account:?} source={source:?} request={request:?} cli={cli_mode} minimized={minimized}"
+        );
+        tracing::debug!(
+            "settings {}: accounts {:?}, default {:?}",
+            config::Settings::path().display(),
+            settings
+                .accounts
+                .iter()
+                .map(|a| format!("{} (short {:?}, id {})", a.title(), a.short_name, a.id))
+                .collect::<Vec<_>>(),
+            settings.default_account
+        );
+        tracing::debug!(
+            "XDG_RUNTIME_DIR={:?}; this process's socket would be {}",
+            std::env::var("XDG_RUNTIME_DIR").ok(),
+            ipc::path_for(std::process::id()).display()
+        );
+    }
     let db = db::open();
+    match &db {
+        Ok(_) => tracing::debug!("opened {}", db::path().display()),
+        Err(e) => tracing::debug!("couldn't open {}: {e}", db::path().display()),
+    }
 
     if cli_mode {
         logging::init(&settings);
@@ -122,6 +156,18 @@ fn main() {
             Vec::new()
         }
     };
+    if live.is_empty() {
+        tracing::debug!("no other MegaSIP is running (per megasip.db)");
+    }
+    for i in &live {
+        tracing::debug!(
+            "running: pid {} account {:?} socket {} (exists: {})",
+            i.pid,
+            i.account_id,
+            ipc::path_for(i.pid).display(),
+            ipc::path_for(i.pid).exists()
+        );
+    }
     let dial = request
         .as_deref()
         .and_then(|r| r.strip_prefix("dial "))
@@ -130,14 +176,17 @@ fn main() {
         for i in &live {
             ipc::send_to(i.pid, request.as_deref().unwrap_or_default());
         }
+        tracing::debug!("sent {request:?} to {} window(s); exiting", live.len());
         return;
     }
     if let Some(name) = &account {
         match settings.find_account(name) {
             None => {
+                tracing::debug!("-a {name:?}: no account by that short name or name");
                 let _ = START_ERROR.set(format!("No account named \"{name}\""));
             }
             Some(acc) => {
+                tracing::debug!("-a {name:?} is account {} (id {})", acc.title(), acc.id);
                 if let Some(holder) = live
                     .iter()
                     .find(|i| i.account_id.as_deref() == Some(acc.id.as_str()))
@@ -145,6 +194,10 @@ fn main() {
                     // That window places the call (and switches to --source first).
                     let src = SOURCE.get().map(|s| s.arg());
                     let lines = ipc::handoff_lines(dial.as_deref(), src.as_deref());
+                    tracing::debug!(
+                        "pid {} has that account: handing it {lines:?}",
+                        holder.pid
+                    );
                     if !ipc::send_lines_to(holder.pid, &lines) {
                         fail(&format!(
                             "{} is active in another MegaSIP (pid {}) that isn't taking calls from the command line (a --cli session?)",
@@ -152,8 +205,10 @@ fn main() {
                             holder.pid
                         ));
                     }
+                    tracing::debug!("handed off to pid {}; exiting", holder.pid);
                     return;
                 }
+                tracing::debug!("no running window has it: opening a window with it");
                 let _ = START_ACCOUNT.set(acc.id.clone());
             }
         }
@@ -165,17 +220,22 @@ fn main() {
                 .or_else(|| live.iter().find(|i| i.account_id.is_some()))
                 .or_else(|| live.first());
             if let Some(t) = target {
+                tracing::debug!("no -a: handing \"dial {d}\" to pid {}", t.pid);
                 if ipc::send_to(t.pid, &format!("dial {d}")) {
                     return;
                 }
             }
         } else if let Some(idle) = live.iter().find(|i| i.account_id.is_none()) {
+            tracing::debug!("no -a: bringing idle window pid {} to the front", idle.pid);
             if ipc::send_to(idle.pid, "show") {
                 return;
             }
         }
+    } else {
+        tracing::debug!("no -a but --source: opening a new window for it");
     }
     if let Some(d) = dial {
+        tracing::debug!("this window will dial {d:?} once it is up");
         let _ = START_DIAL.set(d);
     }
     drop(db);

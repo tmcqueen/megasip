@@ -17,10 +17,13 @@ pub struct Instance {
 }
 
 /// Open (and create) `megasip.db` in the data directory.
+pub fn path() -> std::path::PathBuf {
+    crate::config::data_dir().join("megasip.db")
+}
+
 pub fn open() -> Result<Connection> {
-    let dir = crate::config::data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    open_at(&dir.join("megasip.db"))
+    let _ = std::fs::create_dir_all(crate::config::data_dir());
+    open_at(&path())
 }
 
 pub fn open_at(path: &Path) -> Result<Connection> {
@@ -78,6 +81,10 @@ fn prune(c: &Connection) -> Result<()> {
         .collect::<Result<_>>()?;
     for (pid, start) in rows {
         if !alive(pid, start) {
+            tracing::debug!(
+                "dropping stale instance row: pid {pid} (start {start}, now {:?})",
+                proc_start(pid)
+            );
             // Only that process's row: the PID may have been reused and re-registered since.
             c.execute(
                 "DELETE FROM instances WHERE pid = ?1 AND proc_start = ?2",
@@ -140,6 +147,7 @@ pub fn acquire_as(
         )
         .optional()?;
     if let Some(h) = holder.filter(|&h| h != pid) {
+        tracing::debug!("acquire {account}: already held by pid {h}");
         return Ok(Err(h));
     }
     tx.execute(
@@ -148,6 +156,7 @@ pub fn acquire_as(
         params![pid, start, account, now()],
     )?;
     tx.commit()?;
+    tracing::debug!("acquire {account}: pid {pid} has it now");
     Ok(Ok(()))
 }
 

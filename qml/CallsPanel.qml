@@ -12,6 +12,7 @@ QQC2.Pane {
     property real now: 0
     property var formatDuration
     signal transferRequested(int id)
+    signal qualityRequested(int id)
 
     padding: Kirigami.Units.smallSpacing
     Kirigami.Theme.colorSet: Kirigami.Theme.Window
@@ -86,6 +87,13 @@ QQC2.Pane {
                         icon.color: Kirigami.Theme.positiveTextColor
                         onClicked: panel.phone.answer(row.modelData.id)
                         QQC2.ToolTip.text: "Answer"
+                        QQC2.ToolTip.visible: hovered
+                    }
+                    QQC2.ToolButton {
+                        visible: row.modelData.state === "connected" || row.modelData.state === "early"
+                        icon.name: "help-about"
+                        onClicked: panel.qualityRequested(row.modelData.id)
+                        QQC2.ToolTip.text: "Call quality and SIP trace (Ctrl+Shift+D)"
                         QQC2.ToolTip.visible: hovered
                     }
                     QQC2.ToolButton {

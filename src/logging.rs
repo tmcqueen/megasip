@@ -28,6 +28,8 @@ static STDERR_SIP: AtomicU8 = AtomicU8::new(3);
 static STDERR_AUDIO: AtomicU8 = AtomicU8::new(2);
 static FILES_ON: AtomicBool = AtomicBool::new(false);
 static VENATOR_ON: AtomicBool = AtomicBool::new(false);
+/// What the Debug window's Logs tab keeps (default: info and up).
+static CAPTURE_LEVEL: AtomicU8 = AtomicU8::new(3);
 
 static SIP_FILE: FileSink = FileSink::new();
 static AUDIO_FILE: FileSink = FileSink::new();
@@ -72,6 +74,7 @@ enum Sink {
     AudioFile,
     Stderr,
     Venator,
+    Capture,
 }
 
 struct CatFilter(Sink);
@@ -100,6 +103,7 @@ impl CatFilter {
                     SIP_LEVEL.load(Ordering::Relaxed)
                 }
             }
+            Sink::Capture => CAPTURE_LEVEL.load(Ordering::Relaxed),
             _ => 0,
         };
         lvl <= max
@@ -190,6 +194,58 @@ fn timer() -> tracing_subscriber::fmt::time::ChronoLocal {
     tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".into())
 }
 
+/// Feeds log events into the Debug window's in-memory buffer.
+struct CaptureLayer;
+
+#[derive(Default)]
+struct MsgVisitor {
+    message: String,
+    fields: String,
+}
+
+impl tracing::field::Visit for MsgVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let name = field.name();
+        if name == "message" {
+            self.message = format!("{value:?}");
+        } else if !name.starts_with("log.") {
+            if !self.fields.is_empty() {
+                self.fields.push(' ');
+            }
+            self.fields.push_str(&format!("{name}={value:?}"));
+        }
+    }
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_string();
+        } else {
+            self.record_debug(field, &value);
+        }
+    }
+}
+
+impl<S: Subscriber> Layer<S> for CaptureLayer {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        use tracing_log::NormalizeEvent;
+        let norm = event.normalized_metadata();
+        let meta = norm.as_ref().unwrap_or_else(|| event.metadata());
+        let mut v = MsgVisitor::default();
+        event.record(&mut v);
+        let mut msg = v.message;
+        if !v.fields.is_empty() {
+            msg = format!("{msg} {}", v.fields);
+        }
+        let category = if is_audio(meta.target()) { "audio" } else { "sip" };
+        crate::debug::log(meta.level().as_str(), category, meta.target(), msg);
+    }
+}
+
+/// Set what the Debug window keeps: "error" … "trace".
+pub fn set_capture_level(level: &str) {
+    CAPTURE_LEVEL.store(parse_level(level).max(1), Ordering::Relaxed);
+    tracing::callsite::rebuild_interest_cache();
+}
+
 /// Install the global subscriber. Call once, early.
 pub fn init(settings: &Settings) {
     if let Ok(v) = std::env::var("MEGASIP_LOG") {
@@ -223,6 +279,7 @@ pub fn init(settings: &Settings) {
         sip_file.boxed(),
         audio_file.boxed(),
         stderr.boxed(),
+        CaptureLayer.with_filter(CatFilter(Sink::Capture)).boxed(),
         venator_layer.with_filter(CatFilter(Sink::Venator)).boxed(),
     ];
     let _ = tracing_subscriber::registry().with(layers).try_init();

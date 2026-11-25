@@ -4,6 +4,7 @@ mod appcpp;
 mod bridge;
 mod cli;
 mod config;
+mod debug;
 mod engine;
 mod ipc;
 mod logging;

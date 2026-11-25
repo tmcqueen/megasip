@@ -170,6 +170,100 @@ struct Inner {
     last_dtmf: Option<char>,
     rx_packets: u64,
     last_rx: Option<Instant>,
+    st: Counters,
+}
+
+/// Running counters for the Debug window's call quality view.
+struct Counters {
+    started: Instant,
+    rx_bytes: u64,
+    tx_packets: u64,
+    tx_bytes: u64,
+    srtp_failures: u64,
+    ignored: u64,
+    late: u64,
+    duplicates: u64,
+    concealed: u64,
+    underruns: u64,
+    overflow_samples: u64,
+    drift_skips: u64,
+    /// Packets expected from sequence numbers, and media packets actually received.
+    expected: u64,
+    received: u64,
+    highest: Option<u64>,
+    /// RFC 3550 interarrival jitter, in RTP clock units.
+    jitter: f64,
+    last_transit: Option<f64>,
+    dtmf_rx: u64,
+    dtmf_tx: u64,
+    played_any: bool,
+}
+
+impl Counters {
+    fn new() -> Self {
+        Counters {
+            started: Instant::now(),
+            rx_bytes: 0,
+            tx_packets: 0,
+            tx_bytes: 0,
+            srtp_failures: 0,
+            ignored: 0,
+            late: 0,
+            duplicates: 0,
+            concealed: 0,
+            underruns: 0,
+            overflow_samples: 0,
+            drift_skips: 0,
+            expected: 0,
+            received: 0,
+            highest: None,
+            jitter: 0.0,
+            last_transit: None,
+            dtmf_rx: 0,
+            dtmf_tx: 0,
+            played_any: false,
+        }
+    }
+}
+
+/// A snapshot of one call's media, for the Debug window.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamStats {
+    pub id: u64,
+    pub codec: String,
+    pub payload_type: u8,
+    pub srtp: bool,
+    pub local_port: u16,
+    pub remote: String,
+    pub sending: bool,
+    pub playing: bool,
+    pub duration_s: f64,
+    pub rx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_packets: u64,
+    pub tx_bytes: u64,
+    pub expected: u64,
+    pub lost: u64,
+    pub loss_pct: f64,
+    pub late: u64,
+    pub duplicates: u64,
+    pub concealed: u64,
+    pub underruns: u64,
+    pub overflow_ms: u64,
+    pub drift_skips: u64,
+    pub srtp_failures: u64,
+    pub ignored: u64,
+    pub jitter_ms: f64,
+    pub buffer_ms: f64,
+    pub target_buffer_ms: f64,
+    pub last_rx_ms: Option<u64>,
+    pub dtmf_rx: u64,
+    pub dtmf_tx: u64,
+    /// Simplified ITU-T G.107 E-model; None until there's enough traffic.
+    pub r_factor: Option<f64>,
+    pub mos: Option<f64>,
+    pub ended: bool,
 }
 
 pub struct Stream {
@@ -252,6 +346,7 @@ impl Stream {
             last_dtmf: None,
             rx_packets: 0,
             last_rx: None,
+            st: Counters::new(),
             cfg,
         };
         let s = Arc::new(Stream { id, sock, inner: Mutex::new(inner), rx_task: Mutex::new(None) });
@@ -311,6 +406,55 @@ impl Stream {
         self.lk().cfg.clone()
     }
 
+    pub fn stats(&self) -> StreamStats {
+        let g = self.lk();
+        let c = &g.st;
+        let lost = c.expected.saturating_sub(c.received);
+        let loss_pct = if c.expected > 0 { lost as f64 * 100.0 / c.expected as f64 } else { 0.0 };
+        let jitter_ms = c.jitter * 1000.0 / g.cfg.codec.rtp_clock() as f64;
+        let buffer_ms = g.fifo.len() as f64 / 48.0;
+        // One-way delay we can account for: packetisation + playout buffer + device
+        // buffers, plus a nominal 40 ms for the network we can't see.
+        let delay = 20.0 + buffer_ms + 20.0 + 40.0 + jitter_ms * 2.0;
+        let (r, mos) = estimate_mos(g.cfg.codec, delay, loss_pct);
+        let enough = c.received >= 50;
+        StreamStats {
+            id: self.id,
+            codec: g.cfg.codec.label().to_string(),
+            payload_type: g.cfg.pt,
+            srtp: g.srtp_rx.is_some() || g.srtp_tx.is_some(),
+            local_port: self.sock.local_addr().map(|a| a.port()).unwrap_or(0),
+            remote: g.cfg.remote.map(|a| a.to_string()).unwrap_or_default(),
+            sending: g.cfg.send,
+            playing: g.cfg.play,
+            duration_s: c.started.elapsed().as_secs_f64(),
+            rx_packets: g.rx_packets,
+            rx_bytes: c.rx_bytes,
+            tx_packets: c.tx_packets,
+            tx_bytes: c.tx_bytes,
+            expected: c.expected,
+            lost,
+            loss_pct,
+            late: c.late,
+            duplicates: c.duplicates,
+            concealed: c.concealed,
+            underruns: c.underruns,
+            overflow_ms: c.overflow_samples / 48,
+            drift_skips: c.drift_skips,
+            srtp_failures: c.srtp_failures,
+            ignored: c.ignored,
+            jitter_ms,
+            buffer_ms,
+            target_buffer_ms: TARGET as f64 / 48.0,
+            last_rx_ms: g.last_rx.map(|t| t.elapsed().as_millis() as u64),
+            dtmf_rx: c.dtmf_rx,
+            dtmf_tx: c.dtmf_tx,
+            r_factor: enough.then_some(r),
+            mos: enough.then_some(mos),
+            ended: false,
+        }
+    }
+
     pub fn playing(&self) -> bool {
         self.lk().cfg.play
     }
@@ -354,15 +498,22 @@ impl Stream {
                     plain = b;
                     &plain[..]
                 }
-                Err(_) => return None,
+                Err(_) => {
+                    g.st.srtp_failures += 1;
+                    return None;
+                }
             }
         } else {
             data
         };
-        let pkt = RtpPacket::parse(data).ok()?;
+        let Ok(pkt) = RtpPacket::parse(data) else {
+            g.st.ignored += 1;
+            return None;
+        };
         let pt = pkt.payload_type;
         let is_te = g.cfg.te_pt == Some(pt);
         if pt != g.cfg.pt && !is_te {
+            g.st.ignored += 1;
             return None; // comfort noise or an unnegotiated payload
         }
         // Symmetric RTP: send back to where the media really comes from.
@@ -374,11 +525,13 @@ impl Stream {
             g.latched = true;
         }
         g.rx_packets += 1;
+        g.st.rx_bytes += data.len() as u64;
         g.last_rx = Some(Instant::now());
         if is_te {
             let d = g.dtmf_rx.process_packet(pt, &pkt.payload).map(|d| d.as_char());
             if d.is_some() && d != g.last_dtmf {
                 g.last_dtmf = d;
+                g.st.dtmf_rx += 1;
                 return d;
             }
             if d.is_none() {
@@ -412,15 +565,45 @@ impl Stream {
             }
             e
         };
+        // RFC 3550 interarrival jitter.
+        let clock = g.cfg.codec.rtp_clock() as f64;
+        let arrival = g.st.started.elapsed().as_secs_f64() * clock;
+        let transit = arrival - pkt.timestamp as f64;
+        if let Some(last) = g.st.last_transit {
+            let d = (transit - last).abs();
+            if d < clock * 10.0 {
+                g.st.jitter += (d - g.st.jitter) / 16.0;
+            }
+        }
+        g.st.last_transit = Some(transit);
+
         let expected = g.expected.unwrap();
         if ext + 50 < expected || ext > expected + 1000 {
             // Discontinuity: start over.
             g.reorder.clear();
             g.expected = Some(ext);
+            g.st.highest = None;
+            g.st.last_transit = None;
         } else if ext < expected {
+            g.st.late += 1;
             return None; // late
         }
-        g.reorder.insert(ext, pkt.payload.to_vec());
+        match g.st.highest {
+            None => {
+                g.st.expected += 1;
+                g.st.highest = Some(ext);
+            }
+            Some(h) if ext > h => {
+                g.st.expected += ext - h;
+                g.st.highest = Some(ext);
+            }
+            _ => {}
+        }
+        if g.reorder.insert(ext, pkt.payload.to_vec()).is_some() {
+            g.st.duplicates += 1;
+        } else {
+            g.st.received += 1;
+        }
         self.drain(&mut g);
         None
     }
@@ -441,6 +624,7 @@ impl Stream {
                     None => g.last_frame.iter().map(|&s| s / 2).collect(),
                 };
                 g.last_frame = concealed.clone();
+                g.st.concealed += 1;
                 push_fifo(g, &concealed);
                 g.expected = Some(exp + 1);
             } else {
@@ -460,10 +644,12 @@ impl Stream {
                 return;
             }
             g.buffering = false;
+            g.st.played_any = true;
         }
         if g.fifo.len() > HIGH {
             // Running ahead (clock drift / burst): skip 2 ms.
             g.fifo.drain(..96);
+            g.st.drift_skips += 1;
         }
         let n = out.len().min(g.fifo.len());
         for (o, s) in out.iter_mut().zip(g.fifo.drain(..n)) {
@@ -471,6 +657,9 @@ impl Stream {
         }
         if n < out.len() {
             g.buffering = true;
+            if g.st.played_any {
+                g.st.underruns += 1;
+            }
         }
     }
 
@@ -513,6 +702,9 @@ impl Stream {
             let pkt = RtpPacket::new(te, g.seq, d.start_ts, g.ssrc)
                 .with_marker(d.first)
                 .with_payload(ev.encode().to_vec());
+            if d.first {
+                g.st.dtmf_tx += 1;
+            }
             d.first = false;
             g.seq = g.seq.wrapping_add(1);
             packets.push(pkt.build().to_vec());
@@ -547,7 +739,10 @@ impl Stream {
                 },
                 None => p,
             };
-            let _ = self.sock.send_to(&out, remote);
+            if self.sock.send_to(&out, remote).is_ok() {
+                g.st.tx_packets += 1;
+                g.st.tx_bytes += out.len() as u64;
+            }
         }
     }
 }
@@ -557,7 +752,24 @@ fn push_fifo(g: &mut Inner, pcm: &[i16]) {
     if g.fifo.len() > MAX {
         let extra = g.fifo.len() - TARGET;
         g.fifo.drain(..extra);
+        g.st.overflow_samples += extra as u64;
     }
+}
+
+/// Simplified E-model (ITU-T G.107): R factor and MOS from one-way delay and loss.
+pub fn estimate_mos(codec: CodecKind, delay_ms: f64, loss_pct: f64) -> (f64, f64) {
+    let id = if delay_ms < 177.3 { 0.024 * delay_ms } else { 0.024 * delay_ms + 0.11 * (delay_ms - 177.3) };
+    // Packet-loss robustness (Bpl) with our concealment; equipment impairment Ie ~ 0
+    // for these codecs on the narrowband scale.
+    let (ie, bpl) = match codec {
+        CodecKind::Opus => (0.0, 20.0),
+        CodecKind::G722 => (0.0, 10.0),
+        CodecKind::Pcmu | CodecKind::Pcma => (0.0, 25.1),
+    };
+    let ie_eff = ie + (95.0 - ie) * loss_pct / (loss_pct + bpl);
+    let r = (93.2 - id - ie_eff).clamp(0.0, 100.0);
+    let mos = if r <= 0.0 { 1.0 } else { (1.0 + 0.035 * r + 7e-6 * r * (r - 60.0) * (100.0 - r)).clamp(1.0, 4.5) };
+    (r, mos)
 }
 
 impl Drop for Stream {
@@ -574,4 +786,19 @@ pub fn new_srtp_key(suite: CryptoSuite) -> Vec<u8> {
     let mut k = vec![0u8; suite.master_key_len() + suite.master_salt_len()];
     rand::thread_rng().fill_bytes(&mut k);
     k
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mos_estimates_are_sane() {
+        let (_, clean) = estimate_mos(CodecKind::Pcmu, 120.0, 0.0);
+        let (_, lossy) = estimate_mos(CodecKind::Pcmu, 120.0, 5.0);
+        let (_, awful) = estimate_mos(CodecKind::Pcmu, 400.0, 20.0);
+        assert!(clean > 4.2 && clean <= 4.5, "{clean}");
+        assert!(lossy < clean && lossy > 3.0, "{lossy}");
+        assert!(awful < 2.6, "{awful}");
+    }
 }

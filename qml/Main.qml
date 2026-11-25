@@ -163,7 +163,11 @@ Kirigami.ApplicationWindow {
     onShotStepChanged: {
         if (shotStep < 3) { prefs.hide(); root.currentTab = shotStep }
         else if (shotStep < 10) prefs.openPage(shotStep - 3)
-        else { prefs.forceClose = true; prefs.close(); debugWin.openTab(shotStep - 10) }
+        else if (shotStep < 14) { prefs.forceClose = true; prefs.close(); debugWin.openTab(shotStep - 10) }
+        // 14: a message in the trace pane; 15: after Clear (trace); 16: after Clear (quality)
+        else if (shotStep === 14) { debugWin.openTab(0); debugWin.showMessage("MESSAGE SHOWN BEFORE CLEAR") }
+        else if (shotStep === 15) { debugWin.clearAll(); debugWin.openTab(0) }
+        else debugWin.openTab(2)
     }
 
     IncomingWindow {

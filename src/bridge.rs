@@ -675,6 +675,9 @@ impl qobject::Phone {
 
     fn debug_clear(&self) {
         crate::debug::clear();
+        if let Some(h) = self.rust().hub.as_ref() {
+            h.clear_stats();
+        }
     }
 
     fn debug_set_capture(&self, level: &QString) {

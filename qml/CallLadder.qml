@@ -41,6 +41,13 @@ Item {
         target: ladder.dialogs
         function onCountChanged() { ladder.autoPick() }
     }
+    function reset() {
+        userPicked = false
+        selectedRow = -1
+        callId = ""
+        rebuild()
+    }
+
     function autoPick() {
         if (userPicked) return
         for (let i = 0; i < dialogs.count; i++) {

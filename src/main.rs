@@ -8,6 +8,7 @@ mod debug;
 mod engine;
 mod ipc;
 mod logging;
+mod secrets;
 mod media;
 mod store;
 

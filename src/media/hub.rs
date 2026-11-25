@@ -44,8 +44,11 @@ struct State {
     mic_level: f32,
     spk_level: f32,
     errors: Vec<String>,
-    /// Testing: no sound devices; the "microphone" is a 1 kHz tone (MEGASIP_NULL_AUDIO).
+    /// Testing: no sound devices; the "microphone" is silent unless there is a source
+    /// (MEGASIP_NULL_AUDIO).
     null_audio: bool,
+    /// `--source`: sent instead of the microphone.
+    source: Option<super::source::Source>,
     /// Dominant frequency of what we play (zero crossings), for tests.
     spk_freq: f32,
     last_stats: Option<super::StreamStats>,
@@ -208,6 +211,7 @@ impl AudioHub {
             spk_level: 0.0,
             errors: Vec::new(),
             null_audio: std::env::var_os("MEGASIP_NULL_AUDIO").is_some(),
+            source: None,
             spk_freq: 0.0,
             last_stats: None,
         }));
@@ -282,6 +286,11 @@ impl AudioHub {
         self.st.lock().unwrap_or_else(|e| e.into_inner()).conference = on;
     }
 
+    /// Send `src` instead of the microphone (None: back to the microphone).
+    pub fn set_source(&self, src: Option<super::source::Source>) {
+        self.st.lock().unwrap_or_else(|e| e.into_inner()).source = src;
+    }
+
     pub fn set_mute(&self, on: bool) {
         self.st.lock().unwrap_or_else(|e| e.into_inner()).mute = on;
     }
@@ -340,8 +349,8 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
     let mut acc = vec![0i32; FRAME];
     let mut call_audio: Vec<Vec<i32>> = Vec::new();
     let null_audio = st.lock().unwrap_or_else(|e| e.into_inner()).null_audio;
-    let mut tone_pos: u64 = 0;
-    let tone_hz: f32 = std::env::var("MEGASIP_TEST_TONE_HZ").ok().and_then(|v| v.parse().ok()).unwrap_or(1000.0);
+    let mut player: Option<(super::source::Source, super::source::SourcePlayer)> = None;
+    let mut had_streams = false;
     loop {
         next += Duration::from_millis(20);
         let now = Instant::now();
@@ -351,10 +360,20 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
             next = now;
         }
 
-        let (streams, conference, mute, cfg, ring, ringtone, cfg_version) = {
+        let (streams, conference, mute, cfg, ring, ringtone, cfg_version, source) = {
             let g = st.lock().unwrap_or_else(|e| e.into_inner());
-            (g.streams.clone(), g.conference, g.mute, g.cfg.clone(), g.ring, g.ringtone.clone(), g.cfg_version)
+            (g.streams.clone(), g.conference, g.mute, g.cfg.clone(), g.ring, g.ringtone.clone(), g.cfg_version, g.source.clone())
         };
+        if player.as_ref().map(|(s, _)| s) != source.as_ref() {
+            player = source.map(|s| (s.clone(), super::source::SourcePlayer::new(s)));
+        }
+        // A source starts from the top with each call.
+        if !streams.is_empty() && !had_streams {
+            if let Some((_, p)) = player.as_mut() {
+                p.restart();
+            }
+        }
+        had_streams = !streams.is_empty();
 
         // Device changes: reopen everything.
         if cfg_version != dev.cfg_version {
@@ -399,7 +418,7 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
         let has_tone = st.lock().unwrap_or_else(|e| e.into_inner()).tone.is_some() || ring == Ring::Waiting;
         let has_local = !st.lock().unwrap_or_else(|e| e.into_inner()).local.is_empty();
         let need = !streams.is_empty() || has_tone || has_local;
-        let need_mic = !streams.is_empty();
+        let need_mic = !streams.is_empty() && player.is_none();
 
         if need {
             dev.idle_since = None;
@@ -508,20 +527,23 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
                 *m = s;
             }
         }
+        if let Some((_, p)) = player.as_mut() {
+            p.next_frame(&mut mic);
+        } else if null_audio {
+            mic.fill(0);
+        }
         if null_audio {
-            for m in mic.iter_mut() {
-                *m = ((tone_pos as f32 * 2.0 * std::f32::consts::PI * tone_hz / 48_000.0).sin() * 8000.0) as i16;
-                tone_pos += 1;
-            }
             dev.spk_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
         }
+        // Mic gain is for the microphone; a source keeps its calibrated level.
         let mv = cfg.mic_volume as f32 / 100.0;
-        if (mv - 1.0).abs() > 0.01 {
+        if (mv - 1.0).abs() > 0.01 && player.is_none() {
             for m in mic.iter_mut() {
                 *m = dsp::clamp16(*m as f32 * mv);
             }
         }
-        if cfg.echo_cancellation && !streams.is_empty() {
+        // A source has no room echo or background noise to remove.
+        if cfg.echo_cancellation && !streams.is_empty() && player.is_none() {
             let a = apm.get_or_insert_with(make_apm);
             let mut tmp = [0i16; 480];
             for k in 0..2 {

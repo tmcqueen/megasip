@@ -55,7 +55,7 @@ done
 phone() { # name user password transport srtp codecs
     mkdir -p "$WORK/phones/$1"
     cat > "$WORK/phones/$1/settings.json" <<JSON
-{"accounts":[{"id":"a$2","label":"$1","server":"127.0.0.1:5070","username":"$2","password":"$3","displayName":"$1","transport":"$4","srtp":"$5"}],"codecs":$6}
+{"accounts":[{"id":"a$2","label":"$1","shortName":"$1","server":"127.0.0.1:5070","username":"$2","password":"$3","displayName":"$1","transport":"$4","srtp":"$5"}],"codecs":$6}
 JSON
 }
 phone alice 1001 secret1 udp off '["opus","g722","pcmu","pcma"]'

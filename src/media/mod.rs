@@ -3,6 +3,7 @@
 
 pub mod dsp;
 pub mod hub;
+pub mod source;
 
 use dsp::Resampler;
 use rsiprtp::media::{G711Codec, G722Codec, OpusCodec};

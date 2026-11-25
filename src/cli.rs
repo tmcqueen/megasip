@@ -9,11 +9,14 @@ use crate::engine::{self, Command, Event};
 use crate::media::hub::AudioHub;
 use std::io::BufRead;
 
-pub fn run() {
-    let settings = Settings::load();
+/// Run with `account_id` (already locked in `db`) as the only registered account.
+pub fn run(settings: Settings, account_id: String, db: rusqlite::Connection) {
     let hub = AudioHub::start();
+    if let Some(src) = crate::SOURCE.get() {
+        hub.set_source(Some(src.clone()));
+    }
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-    let cmd = engine::spawn(settings, hub.clone(), tx);
+    let cmd = engine::spawn(settings.for_engine(Some(&account_id)), hub.clone(), tx);
     let last_incoming = std::sync::Arc::new(std::sync::Mutex::new(0u64));
     let li = last_incoming.clone();
     std::thread::spawn(move || {
@@ -25,7 +28,14 @@ pub fn run() {
                     *li.lock().unwrap() = c.id;
                     serde_json::json!({"event": "incoming", "call": c})
                 }
-                Event::Ended { info, missed } => serde_json::json!({"event": "ended", "call": info, "missed": missed}),
+                Event::Ended { info, missed } => {
+                    if info.account_id == account_id {
+                        if let Err(e) = crate::db::add_history(&db, &crate::store::history_entry(&info, missed)) {
+                            tracing::warn!("couldn't save call history: {e}");
+                        }
+                    }
+                    serde_json::json!({"event": "ended", "call": info, "missed": missed})
+                }
                 Event::Dtmf(id, d) => serde_json::json!({"event": "dtmf", "id": id, "digit": d.to_string()}),
                 Event::Error(e) => serde_json::json!({"event": "error", "text": e}),
             };
@@ -71,4 +81,7 @@ pub fn run() {
     }
     let _ = cmd.send(Command::Shutdown);
     std::thread::sleep(std::time::Duration::from_millis(800));
+    if let Ok(c) = crate::db::open() {
+        crate::db::unregister_self(&c);
+    }
 }

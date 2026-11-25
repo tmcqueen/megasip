@@ -1,4 +1,5 @@
-//! Call history and contacts, as JSON in `~/.local/share/megasip/`.
+//! Contacts, as JSON in `~/.local/share/megasip/`, and the call history record type
+//! (history itself lives in `megasip.db`, see `db`).
 
 use crate::config::data_dir;
 use serde::{Deserialize, Serialize};
@@ -27,8 +28,6 @@ pub struct Contact {
     pub notes: String,
 }
 
-const MAX_HISTORY: usize = 1000;
-
 fn load<T: for<'a> Deserialize<'a> + Default>(name: &str) -> T {
     std::fs::read_to_string(data_dir().join(name))
         .ok()
@@ -47,13 +46,26 @@ fn save<T: Serialize>(name: &str, v: &T) {
     }
 }
 
-pub fn load_history() -> Vec<HistoryEntry> {
-    load("history.json")
-}
-
-pub fn save_history(h: &[HistoryEntry]) {
-    let start = h.len().saturating_sub(MAX_HISTORY);
-    save("history.json", &h[start..].to_vec());
+/// The history record for a call that just ended.
+pub fn history_entry(info: &crate::engine::CallInfo, missed: bool) -> HistoryEntry {
+    let now = chrono::Utc::now().timestamp();
+    let kind = if missed {
+        "missed"
+    } else if info.direction == "in" {
+        "in"
+    } else {
+        "out"
+    };
+    HistoryEntry {
+        id: crate::engine::msg::random_token(10),
+        number: info.number.clone(),
+        name: info.name.clone(),
+        account_id: info.account_id.clone(),
+        kind: kind.into(),
+        time: info.started,
+        duration: info.connected_at.map(|t| (now - t).max(0)).unwrap_or(0),
+        reason: info.reason.clone(),
+    }
 }
 
 pub fn load_contacts() -> Vec<Contact> {

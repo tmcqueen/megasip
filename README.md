@@ -55,15 +55,62 @@ registers MegaSIP for `sip:`/`tel:` links where no other app handles them.
 | Ctrl+1 … Ctrl+3 | Dial pad, contacts, calls |
 | Ctrl+, | Preferences |
 
-From the command line (talks to the running instance):
+## One account per window
+
+Each MegaSIP window has at most one account active, and an account can be active in only
+one window at a time. A plain `megasip` opens a window with nothing registered. Pick an
+account from the tray menu or the account button at the top of the window:
+
+- In a window with no account, the account is activated there.
+- In a window that already has one, it opens in a new window.
+- Accounts active in another window are greyed out.
+- **Deactivate** gives the window's account up again.
+
+Each account has a **display name**, shown in MegaSIP ("Telnyx - Tim McQueen"), and a
+**short name** for the command line (`megasip -a telnyx-tim`). Short names use letters,
+digits and `- _ . @`, and no two accounts can share one. Accounts without a short name get
+one made from their display name.
+
+Each window's **Calls** tab shows only its own account's history. Its logs go to
+`sip-<account>.log` and `audio-<account>.log`.
+
+From the command line:
 
 ```sh
-megasip 1002              # or sip:bob@example.com, tel:+15551234
-megasip --answer
-megasip --hangup
+megasip                         # a window with no account active (or the idle one, raised)
+megasip -a work                 # a window with the account whose short name is "work";
+                                # if another window has it, that window comes to the front
+megasip -a work 1002            # ...and call 1002 once it's registered
+megasip 1002                    # call from the window with the default account (or sip:…, tel:…)
+megasip --answer                # answer the ringing call
+megasip --hangup                # hang up all calls, in every window
+megasip --quit                  # quit every window
 megasip --minimized
-megasip --quit
 ```
+
+### Sending a file or test signal instead of the microphone
+
+`--source` sends something else in place of the microphone, for every call in that
+window. It always opens a new window.
+
+```sh
+megasip -a work --source greeting.mp3 1002   # .wav, .ogg or .mp3, looped from the top of each call
+megasip -a work --source milli               # 1004 Hz test tone at 0 dBm0
+megasip -a work --source pink                # pink noise at -20 dBFS (also: white)
+megasip -a work --source tone:440            # a sine at any frequency
+```
+
+The window shows **Source: …** next to the account, the call panel's level meter is
+labelled with it, and the microphone choice in Preferences is disabled. Echo cancellation,
+noise suppression and microphone gain don't touch it. Files are decoded up front, and
+anything past 10 minutes is cut.
+
+### Headless
+
+`megasip --cli -a <account> [--source …]` runs one account with no window: commands on
+stdin, events as JSON lines on stdout (see `src/cli.rs`). It refuses to start (exit code 2)
+without `-a`, or if the account is active elsewhere. Its calls are saved to that account's
+history.
 
 ## Preferences
 
@@ -88,7 +135,9 @@ Files:
   "MegaSIP: <account>". Passwords that older versions left in the file are moved into the
   wallet the next time MegaSIP starts. If the wallet can't be reached, Save fails and
   shows the error; nothing is written in plain text.
-- `~/.local/share/megasip/` holds history, contacts and the optional log.
+- `~/.local/share/megasip/megasip.db` (SQLite) holds call history and which window has which
+  account active. A window that crashes leaves its account free for the next one.
+- `~/.local/share/megasip/` also holds contacts and the optional logs.
 
 ## Debug window
 

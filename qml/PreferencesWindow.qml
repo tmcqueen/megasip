@@ -53,14 +53,22 @@ QQC2.ApplicationWindow {
         raise()
         requestActivate()
     }
+    // What the draft started from, so saving merges with other windows' changes.
+    property string base: "{}"
     function reload() {
-        draft = JSON.parse(phone.settingsJson || "{}")
+        base = phone.settingsJson || "{}"
+        draft = JSON.parse(base)
         if (!draft.accounts) draft.accounts = []
         const d = draft.accounts.findIndex(a => a.id === draft.defaultAccount)
         if (selAcc < 0 || selAcc >= draft.accounts.length) selAcc = Math.max(0, d)
         dirty = false
         saveError = ""
         version++
+    }
+    // Another window (or this one's tray toggles) saved: keep an untouched draft current.
+    Connections {
+        target: win.phone
+        function onSettingsJsonChanged() { if (win.visible && !win.dirty) win.reload() }
     }
     function set(key, value) {
         if (draft[key] === value) return
@@ -79,7 +87,7 @@ QQC2.ApplicationWindow {
             a.server = (a.server || "").trim()
             a.username = (a.username || "").trim()
         }
-        const err = phone.saveSettings(JSON.stringify(draft))
+        const err = phone.saveSettings(win.base, JSON.stringify(draft))
         if (err) { saveError = err; return false }
         dirty = false
         reload()
@@ -238,7 +246,7 @@ QQC2.ApplicationWindow {
             spacing: 0
             PrefSection {
                 title: "Your accounts"
-                description: "Calls go out on the default account. Incoming calls ring on all of them."
+                description: "Each window has one account active: pick it from the tray or the account button. The default account is the one desktop call links use."
                 Repeater {
                     model: win.draft.accounts ? win.draft.accounts.length : 0
                     delegate: QQC2.ItemDelegate {
@@ -331,21 +339,33 @@ QQC2.ApplicationWindow {
                             }
                         }
                         PrefField {
-                            label: "Display name"
+                            label: "Account display name"
+                            hint: "Shown in MegaSIP, e.g. Telnyx - Tim McQueen"
+                            QQC2.TextField {
+                                Layout.fillWidth: true
+                                text: win.acc() ? win.acc().label || "" : ""
+                                onTextEdited: win.setAcc("label", text)
+                            }
+                        }
+                        PrefField {
+                            label: "Short name"
+                            hint: "For the command line: megasip -a " + (win.acc() && win.acc().shortName ? win.acc().shortName : "<short name>")
+                                  + ". Letters, digits and - _ . @; made from the display name if left empty."
+                            QQC2.TextField {
+                                Layout.fillWidth: true
+                                placeholderText: "e.g. telnyx-tim"
+                                validator: RegularExpressionValidator { regularExpression: /[0-9A-Za-z_.@-]*/ }
+                                text: win.acc() ? win.acc().shortName || "" : ""
+                                onTextEdited: win.setAcc("shortName", text)
+                            }
+                        }
+                        PrefField {
+                            label: "Caller ID name"
                             hint: "Shown to the people you call"
                             QQC2.TextField {
                                 Layout.fillWidth: true
                                 text: win.acc() ? win.acc().displayName || "" : ""
                                 onTextEdited: win.setAcc("displayName", text)
-                            }
-                        }
-                        PrefField {
-                            label: "Account name"
-                            hint: "Optional, e.g. Work"
-                            QQC2.TextField {
-                                Layout.fillWidth: true
-                                text: win.acc() ? win.acc().label || "" : ""
-                                onTextEdited: win.setAcc("label", text)
                             }
                         }
                     }
@@ -506,9 +526,19 @@ QQC2.ApplicationWindow {
                     QQC2.Label { text: "Microphone" }
                     QQC2.ComboBox { wheelEnabled: false;
                         Layout.fillWidth: true
+                        enabled: win.phone.sourceLabel === ""
                         model: ["System default"].concat(win.devices.inputs)
                         currentIndex: win.devIndex(win.devices.inputs, win.draft.microphoneDevice || "")
                         onActivated: i => win.set("microphoneDevice", i === 0 ? "" : win.devices.inputs[i - 1])
+                    }
+                    Item { visible: win.phone.sourceLabel !== ""; Layout.preferredHeight: 1 }
+                    QQC2.Label {
+                        visible: win.phone.sourceLabel !== ""
+                        Layout.fillWidth: true
+                        text: "Using " + win.phone.sourceLabel + " from the command line"
+                        font: Kirigami.Theme.smallFont
+                        color: Kirigami.Theme.neutralTextColor
+                        wrapMode: Text.Wrap
                     }
                     QQC2.Label { text: "Ring on" }
                     QQC2.ComboBox { wheelEnabled: false;

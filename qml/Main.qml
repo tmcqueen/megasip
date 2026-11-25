@@ -8,7 +8,7 @@ import org.megasip
 
 Kirigami.ApplicationWindow {
     id: root
-    title: "MegaSIP"
+    title: activeAcc ? "MegaSIP — " + accTitle(activeAcc) : "MegaSIP"
     width: Kirigami.Units.gridUnit * 21
     height: Kirigami.Units.gridUnit * 36
     minimumWidth: Kirigami.Units.gridUnit * 17
@@ -23,6 +23,28 @@ Kirigami.ApplicationWindow {
     property var settings: phone.settingsJson ? JSON.parse(phone.settingsJson) : ({})
     property var devices: phone.devicesJson ? JSON.parse(phone.devicesJson) : ({ outputs: [], inputs: [] })
     property int currentTab: 0
+
+    // One account per window: this window's, the ones it can pick, and the ones other
+    // windows have active.
+    function accTitle(a) {
+        if (a.label && a.label.trim()) return a.label.trim()
+        if (a.username) return a.username + "@" + ((a.domain && a.domain.trim()) || (a.server || "").trim())
+        return "New account"
+    }
+    property var activeAcc: (settings.accounts || []).find(a => a.id === phone.activeAccount) || null
+    property var pickable: (settings.accounts || []).filter(a => a.enabled && a.server && a.server.trim())
+    property var inUse: []
+    function refreshInUse() {
+        const v = JSON.parse(phone.accountsInUse() || "[]")
+        if (JSON.stringify(v) !== JSON.stringify(inUse)) inUse = v
+    }
+    Timer {
+        interval: 3000
+        repeat: true
+        running: true
+        triggeredOnStart: true
+        onTriggered: root.refreshInUse()
+    }
     property var selectedCall: {
         // The call the dialpad and buttons act on: the active (not held) one first.
         for (let c of calls) if (c.state === "connected" && !c.held) return c
@@ -42,7 +64,7 @@ Kirigami.ApplicationWindow {
     }
     function dial(number) {
         if (!number || !number.trim()) return
-        phone.dial(number, settings.defaultAccount || "")
+        phone.dial(number, phone.activeAccount)
         currentTab = 0
     }
     function displayName(c) {
@@ -117,12 +139,22 @@ Kirigami.ApplicationWindow {
         icon.name: phone.missedCount > 0 ? "call-missed"
                  : root.calls.length > 0 ? "call-start"
                  : root.accounts.some(a => a.state === "registered") ? "call-start-symbolic" : "call-stop"
-        tooltip: "MegaSIP — " + phone.statusText
+        tooltip: "MegaSIP — " + (root.activeAcc ? root.accTitle(root.activeAcc) + ": " : "") + phone.statusText + (phone.sourceLabel ? " · playing " + phone.sourceLabel : "")
         onActivated: reason => {
             if (reason === Platform.SystemTrayIcon.Trigger) root.toggle()
         }
         menu: Platform.Menu {
+            id: trayMenu
+            onAboutToShow: root.refreshInUse()
             Platform.MenuItem { text: root.visible ? "Hide" : "Show"; onTriggered: root.toggle() }
+            Platform.MenuSeparator {}
+            Platform.MenuItem { text: "Accounts"; enabled: false; visible: root.pickable.length > 0 }
+            // Account items are inserted here (index 3 on) by the Instantiator below.
+            Platform.MenuItem {
+                text: root.activeAcc ? "Deactivate " + root.accTitle(root.activeAcc) : ""
+                visible: !!root.activeAcc
+                onTriggered: phone.deactivateAccount()
+            }
             Platform.MenuSeparator {}
             Platform.MenuItem { text: "Do Not Disturb"; checkable: true; checked: phone.dnd; onTriggered: phone.setDndOn(!phone.dnd) }
             Platform.MenuItem { text: "Auto Answer"; checkable: true; checked: phone.autoAnswer; onTriggered: phone.setAutoAnswerOn(!phone.autoAnswer) }
@@ -132,6 +164,23 @@ Kirigami.ApplicationWindow {
             Platform.MenuItem { text: "Debug window…"; onTriggered: debugWin.openTab() }
             Platform.MenuItem { text: "Quit"; onTriggered: phone.quit() }
         }
+    }
+
+    Instantiator {
+        model: root.pickable
+        delegate: Platform.MenuItem {
+            required property var modelData
+            text: root.accTitle(modelData) + (root.inUse.includes(modelData.id) ? "  (in another window)" : "")
+            checkable: true
+            checked: modelData.id === phone.activeAccount
+            enabled: !root.inUse.includes(modelData.id)
+            onTriggered: {
+                phone.pickAccount(modelData.id)
+                checked = Qt.binding(() => modelData.id === phone.activeAccount)
+            }
+        }
+        onObjectAdded: (index, object) => trayMenu.insertItem(3 + index, object)
+        onObjectRemoved: (index, object) => trayMenu.removeItem(object)
     }
 
     onClosing: close => {
@@ -203,6 +252,11 @@ Kirigami.ApplicationWindow {
                 phone: phone
                 accounts: root.accounts
                 settings: root.settings
+                activeAcc: root.activeAcc
+                pickable: root.pickable
+                inUse: root.inUse
+                accTitle: root.accTitle
+                onMenuOpening: root.refreshInUse()
                 onPreferencesRequested: prefs.openPage()
                 onAccountRequested: prefs.openPage(0)
             }

@@ -144,7 +144,8 @@ QQC2.ScrollView {
                                 ["Drift skips / overflow", `${card.s.driftSkips} / ${card.s.overflowMs} ms`],
                                 ["SRTP failures", `${card.s.srtpFailures}`],
                                 ["Ignored packets", `${card.s.ignored}`],
-                                ["DTMF in / out", `${card.s.dtmfRx} / ${card.s.dtmfTx}`]
+                                ["DTMF in / out", `${card.s.dtmfRx} / ${card.s.dtmfTx}`],
+                                ["Input", cq.quality.source ? `${cq.quality.source} (--source)` : "Microphone"]
                             ]
                             delegate: RowLayout {
                                 required property var modelData

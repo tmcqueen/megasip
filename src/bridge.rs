@@ -239,10 +239,9 @@ impl cxx_qt::Initialize for qobject::Phone {
         let db = match crate::db::open() {
             Ok(c) => {
                 match crate::db::register_self(&c) {
-                    Ok(()) => tracing::debug!(
-                        "window pid {} listed in megasip.db",
-                        std::process::id()
-                    ),
+                    Ok(()) => {
+                        tracing::debug!("window pid {} listed in megasip.db", std::process::id())
+                    }
                     Err(e) => tracing::warn!("couldn't list this window in megasip.db: {e}"),
                 }
                 Some(c)
@@ -356,7 +355,9 @@ impl cxx_qt::Initialize for qobject::Phone {
                 }
             });
         } else {
-            tracing::warn!("ipc: no socket listener, so other megasip commands can't reach this window");
+            tracing::warn!(
+                "ipc: no socket listener, so other megasip commands can't reach this window"
+            );
         }
     }
 }

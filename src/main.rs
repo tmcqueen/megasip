@@ -194,10 +194,7 @@ fn main() {
                     // That window places the call (and switches to --source first).
                     let src = SOURCE.get().map(|s| s.arg());
                     let lines = ipc::handoff_lines(dial.as_deref(), src.as_deref());
-                    tracing::debug!(
-                        "pid {} has that account: handing it {lines:?}",
-                        holder.pid
-                    );
+                    tracing::debug!("pid {} has that account: handing it {lines:?}", holder.pid);
                     if !ipc::send_lines_to(holder.pid, &lines) {
                         fail(&format!(
                             "{} is active in another MegaSIP (pid {}) that isn't taking calls from the command line (a --cli session?)",

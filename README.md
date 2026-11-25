@@ -35,6 +35,7 @@ sudo apt install cargo build-essential pkg-config clang \
     qml6-module-org-kde-kirigami qml6-module-org-kde-kirigamiaddons-formcard \
     qml6-module-org-kde-kirigamiaddons-components qml6-module-org-kde-notifications \
     qml6-module-qt-labs-platform
+sudo apt install lld   # optional: faster linking, and silences cxx-qt's linker warning
 ./install.sh          # builds, then installs into ~/.local (no sudo)
 megasip
 ```

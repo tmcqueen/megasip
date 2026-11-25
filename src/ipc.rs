@@ -29,8 +29,20 @@ fn send_at(path: &std::path::Path, lines: &[String]) -> bool {
         msg.push('\n');
     }
     match UnixStream::connect(path) {
-        Ok(mut s) => s.write_all(msg.as_bytes()).is_ok(),
-        Err(_) => false,
+        Ok(mut s) => match s.write_all(msg.as_bytes()) {
+            Ok(()) => {
+                tracing::debug!("ipc: sent {lines:?} to {}", path.display());
+                true
+            }
+            Err(e) => {
+                tracing::debug!("ipc: connected to {} but write failed: {e}", path.display());
+                false
+            }
+        },
+        Err(e) => {
+            tracing::debug!("ipc: can't connect to {}: {e}", path.display());
+            false
+        }
     }
 }
 
@@ -70,9 +82,14 @@ pub fn send_self(line: &str) -> bool {
 pub fn listen() {
     let p = path_for(std::process::id());
     let _ = std::fs::remove_file(&p);
-    let Ok(l) = UnixListener::bind(&p) else {
-        return;
+    let l = match UnixListener::bind(&p) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!("ipc: can't listen on {}: {e}", p.display());
+            return;
+        }
     };
+    tracing::debug!("ipc: listening on {}", p.display());
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
@@ -81,10 +98,17 @@ pub fn listen() {
     *RX.lock().unwrap() = Some(rx);
     std::thread::spawn(move || {
         for s in l.incoming().flatten() {
+            tracing::debug!("ipc: connection accepted");
             let tx = tx.clone();
             std::thread::spawn(move || {
                 for line in BufReader::new(s).lines().map_while(Result::ok).take(16) {
-                    if line.len() < 4096 && tx.send(line).is_err() {
+                    if line.len() >= 4096 {
+                        tracing::debug!("ipc: dropped a {}-byte line", line.len());
+                        continue;
+                    }
+                    tracing::debug!("ipc: received {line:?}");
+                    if tx.send(line).is_err() {
+                        tracing::debug!("ipc: nobody is reading requests (window not set up?)");
                         break;
                     }
                 }

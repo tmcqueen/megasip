@@ -30,6 +30,10 @@ static FILES_ON: AtomicBool = AtomicBool::new(false);
 static VENATOR_ON: AtomicBool = AtomicBool::new(false);
 /// What the Debug window's Logs tab keeps (default: info and up).
 static CAPTURE_LEVEL: AtomicU8 = AtomicU8::new(3);
+/// `--debug`: what goes to stdout (0 = nothing). Audio libraries stay at info there.
+static STDOUT_SIP: AtomicU8 = AtomicU8::new(0);
+static STDOUT_AUDIO: AtomicU8 = AtomicU8::new(0);
+static INITED: AtomicBool = AtomicBool::new(false);
 
 static SIP_FILE: FileSink = FileSink::new();
 static AUDIO_FILE: FileSink = FileSink::new();
@@ -81,6 +85,7 @@ enum Sink {
     SipFile,
     AudioFile,
     Stderr,
+    Stdout,
     Venator,
     Capture,
 }
@@ -107,6 +112,9 @@ impl CatFilter {
             Sink::Stderr if meta.target().starts_with("venator") => 0,
             Sink::Stderr if audio => STDERR_AUDIO.load(Ordering::Relaxed),
             Sink::Stderr => STDERR_SIP.load(Ordering::Relaxed),
+            Sink::Stdout if meta.target().starts_with("venator") => 0,
+            Sink::Stdout if audio => STDOUT_AUDIO.load(Ordering::Relaxed),
+            Sink::Stdout => STDOUT_SIP.load(Ordering::Relaxed),
             // Venator's own connection messages must not loop back into it.
             Sink::Venator
                 if VENATOR_ON.load(Ordering::Relaxed) && !meta.target().starts_with("venator") =>
@@ -279,8 +287,21 @@ pub fn set_capture_level(level: &str) {
     tracing::callsite::rebuild_interest_cache();
 }
 
-/// Install the global subscriber. Call once, early.
+/// `--debug`: log at debug level to stdout (audio libraries at info, since their debug
+/// output is per-buffer noise). Stderr stays quiet unless MEGASIP_LOG / MEGASIP_AUDIO_LOG
+/// ask for it, so lines don't show twice. Call before `init`.
+pub fn enable_debug_stdout() {
+    STDOUT_SIP.store(4, Ordering::Relaxed);
+    STDOUT_AUDIO.store(3, Ordering::Relaxed);
+    STDERR_SIP.store(0, Ordering::Relaxed);
+    STDERR_AUDIO.store(0, Ordering::Relaxed);
+}
+
+/// Install the global subscriber. Call early; later calls do nothing.
 pub fn init(settings: &Settings) {
+    if INITED.swap(true, Ordering::Relaxed) {
+        return;
+    }
     if let Ok(v) = std::env::var("MEGASIP_LOG") {
         STDERR_SIP.store(parse_level(&v), Ordering::Relaxed);
     }
@@ -304,6 +325,11 @@ pub fn init(settings: &Settings) {
         .with_timer(timer())
         .with_writer(std::io::stderr)
         .with_filter(CatFilter(Sink::Stderr));
+    let stdout = tracing_subscriber::fmt::layer()
+        .with_timer(timer())
+        .with_thread_names(true)
+        .with_writer(std::io::stdout)
+        .with_filter(CatFilter(Sink::Stdout));
 
     // Venator goes last: when it can't connect it logs from inside the dispatch of the
     // event it was sending, which resets tracing's per-layer filter state for any layer
@@ -312,6 +338,7 @@ pub fn init(settings: &Settings) {
         sip_file.boxed(),
         audio_file.boxed(),
         stderr.boxed(),
+        stdout.boxed(),
         CaptureLayer.with_filter(CatFilter(Sink::Capture)).boxed(),
         venator_layer.with_filter(CatFilter(Sink::Venator)).boxed(),
     ];

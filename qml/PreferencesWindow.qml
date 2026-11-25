@@ -860,7 +860,7 @@ QQC2.ApplicationWindow {
                     hint: "Some providers want a specific one. Leave empty for MegaSIP's."
                     QQC2.TextField {
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 18
-                        placeholderText: "MegaSIP/0.1.0"
+                        placeholderText: "MegaSIP/0.2.0"
                         text: win.draft.userAgent || ""
                         onTextEdited: win.set("userAgent", text)
                     }

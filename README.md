@@ -210,6 +210,11 @@ Changes apply as soon as you save, without a restart.
 On the terminal, `MEGASIP_LOG=debug megasip` prints the SIP trace. Audio is limited to
 warnings unless you set `MEGASIP_AUDIO_LOG=info` (or `debug`).
 
+`megasip --debug` logs at debug level to stdout instead: what the command line found in
+settings and `megasip.db`, which window it hands a request to and over which socket, and
+what that window did with it. Run both the window and the second command with `--debug`
+to follow a hand-off from end to end. Audio libraries stay at info there.
+
 ## Tests
 
 ```sh

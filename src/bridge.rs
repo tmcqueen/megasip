@@ -238,8 +238,11 @@ impl cxx_qt::Initialize for qobject::Phone {
         }
         let db = match crate::db::open() {
             Ok(c) => {
-                if let Err(e) = crate::db::register_self(&c) {
-                    tracing::warn!("couldn't list this window in megasip.db: {e}");
+                match crate::db::register_self(&c) {
+                    Ok(()) => {
+                        tracing::debug!("window pid {} listed in megasip.db", std::process::id())
+                    }
+                    Err(e) => tracing::warn!("couldn't list this window in megasip.db: {e}"),
                 }
                 Some(c)
             }
@@ -275,6 +278,7 @@ impl cxx_qt::Initialize for qobject::Phone {
         // Activate once QML is listening, so a lost race ("already active") is shown.
         let start_account = crate::START_ACCOUNT.get().cloned();
         let start_dial = crate::START_DIAL.get().cloned();
+        tracing::debug!("window start-up: account {start_account:?}, dial {start_dial:?}");
         let _ = self
             .qt_thread()
             .queue(move |mut p| p.as_mut().start_up(start_account, start_dial));
@@ -339,14 +343,21 @@ impl cxx_qt::Initialize for qobject::Phone {
 
         // Second instances / tel: links -> Qt thread.
         if let Some(rx) = crate::ipc::take_receiver() {
+            tracing::debug!("ipc: window is reading requests");
             let qt = self.qt_thread();
             std::thread::spawn(move || {
                 while let Ok(line) = rx.recv() {
+                    tracing::debug!("ipc: queueing {line:?} for the Qt thread");
                     if qt.queue(move |p| p.on_ipc(line)).is_err() {
+                        tracing::debug!("ipc: Qt thread is gone; no more requests");
                         break;
                     }
                 }
             });
+        } else {
+            tracing::warn!(
+                "ipc: no socket listener, so other megasip commands can't reach this window"
+            );
         }
     }
 }
@@ -355,6 +366,12 @@ impl qobject::Phone {
     fn on_event(mut self: Pin<&mut Self>, ev: Event) {
         match ev {
             Event::Accounts(list) => {
+                tracing::debug!(
+                    "accounts: {:?}",
+                    list.iter()
+                        .map(|a| format!("{}={}", a.id, a.state))
+                        .collect::<Vec<_>>()
+                );
                 let json = serde_json::to_string(&list).unwrap_or_default();
                 let registered =
                     self.rust().active.as_ref().is_some_and(|id| {
@@ -441,13 +458,21 @@ impl qobject::Phone {
 
     fn on_ipc(mut self: Pin<&mut Self>, line: String) {
         let line = line.trim();
+        tracing::debug!(
+            "ipc: handling {line:?} (active account {:?}, {} call(s) up)",
+            self.rust().active,
+            self.rust().calls.len()
+        );
         if let Some(rest) = line.strip_prefix("dial ") {
             let (target, source) = crate::ipc::split_dial(rest);
+            tracing::debug!("ipc: dial target {target:?} source {source:?}");
             if let Some(src) = source {
                 if !self.as_mut().switch_source(src) {
+                    tracing::debug!("ipc: source {src:?} refused; not dialing");
                     self.as_mut().activate_requested();
                     return;
                 }
+                tracing::debug!("ipc: now sending {src:?}");
             }
             let t = target
                 .trim()
@@ -461,6 +486,7 @@ impl qobject::Phone {
             };
             self.as_mut().activate_requested();
             let acc = self.rust().active.clone().unwrap_or_default();
+            tracing::debug!("ipc: dialing {t:?} on account {acc:?}");
             self.as_mut().do_dial(&t, &acc);
         } else if line == "answer" {
             if let Some(id) = self
@@ -496,11 +522,20 @@ impl qobject::Phone {
         let src = match crate::media::source::Source::parse(arg) {
             Ok(s) => s,
             Err(e) => {
+                tracing::debug!("source {arg:?} doesn't parse: {e}");
                 self.as_mut().error_message(qs(&e));
                 return false;
             }
         };
         if !self.rust().calls.is_empty() {
+            tracing::debug!(
+                "not switching to {arg:?}: calls up {:?}",
+                self.rust()
+                    .calls
+                    .values()
+                    .map(|c| format!("{}:{}", c.id, c.state))
+                    .collect::<Vec<_>>()
+            );
             self.as_mut().error_message(qs(&format!(
                 "Not switching to {}: a call is in progress and would get it too. Hang up and try again.",
                 src.label()
@@ -682,6 +717,7 @@ impl qobject::Phone {
 
     /// Start-up requests from the command line: the `-a` account, then a number to dial.
     fn start_up(mut self: Pin<&mut Self>, account: Option<String>, dial: Option<String>) {
+        tracing::debug!("start_up: account {account:?} dial {dial:?}");
         if let Some(id) = &account {
             self.as_mut().activate(id);
         }
@@ -696,6 +732,7 @@ impl qobject::Phone {
                         .as_ref()
                         .and_then(|c| crate::db::holder(c, id).ok().flatten())
                 });
+                tracing::debug!("start_up: lost the account race; holder {holder:?}");
                 if let Some(pid) = holder {
                     let src = crate::SOURCE.get().map(|s| s.arg());
                     crate::ipc::send_lines_to(
@@ -706,6 +743,7 @@ impl qobject::Phone {
                 return;
             }
             // Dial once registered (on_event), or after 10 s regardless.
+            tracing::debug!("start_up: will dial {d:?} once registered (or in 10 s)");
             self.as_mut().rust_mut().pending_dial = Some(d);
             let qt = self.qt_thread();
             std::thread::spawn(move || {
@@ -727,6 +765,7 @@ impl qobject::Phone {
 
     fn flush_pending_dial(mut self: Pin<&mut Self>) {
         if let Some(d) = self.as_mut().rust_mut().pending_dial.take() {
+            tracing::debug!("dialing pending {d:?}");
             self.as_mut().activate_requested();
             let acc = self.rust().active.clone().unwrap_or_default();
             self.do_dial(&d, &acc);
@@ -793,8 +832,10 @@ impl qobject::Phone {
     fn do_dial(mut self: Pin<&mut Self>, number: &str, account: &str) {
         let number = number.trim().to_string();
         if number.is_empty() {
+            tracing::debug!("do_dial: empty number, nothing to do");
             return;
         }
+        tracing::debug!("do_dial: Command::Dial {number:?} on account {account:?}");
         self.rust().send(Command::Dial {
             account: account.to_string(),
             number: number.clone(),

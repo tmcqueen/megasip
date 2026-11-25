@@ -16,7 +16,58 @@
 #include <KLocalizedQmlContext>
 #include <KLocalizedString>
 
-int32_t run_qt_app(rust::Str app_id, bool start_hidden)
+#include <algorithm>
+#include <utility>
+
+static QString fromRust(rust::Str s)
+{
+    return QString::fromUtf8(s.data(), s.size());
+}
+
+static QIcon iconFor(const QString &path)
+{
+    if (!path.isEmpty()) {
+        QIcon icon(path);
+        if (!icon.isNull()) {
+            return icon;
+        }
+    }
+    return QIcon::fromTheme(QStringLiteral("org.megasip.MegaSIP"), QIcon::fromTheme(QStringLiteral("call-start")));
+}
+
+void set_app_identity(rust::Str app_id, rust::Str icon_path)
+{
+    QApplication::setWindowIcon(iconFor(fromRust(icon_path)));
+    const QString id = fromRust(app_id);
+    if (id == QGuiApplication::desktopFileName()) {
+        return;
+    }
+    QGuiApplication::setDesktopFileName(id);
+    // A Wayland window's app_id goes to the compositor when the window is mapped, and the
+    // taskbar takes the icon from the .desktop file of that app_id. So re-map the windows
+    // that are showing: hide dialogs before the windows they belong to, show them after.
+    QWindow *focused = QGuiApplication::focusWindow();
+    QList<QWindow *> shown;
+    for (QWindow *w : QGuiApplication::topLevelWindows()) {
+        if (w->isVisible() && (w->type() == Qt::Window || w->type() == Qt::Dialog)) {
+            shown << w;
+        }
+    }
+    std::stable_sort(shown.begin(), shown.end(), [](QWindow *a, QWindow *b) {
+        return a->transientParent() != nullptr && b->transientParent() == nullptr;
+    });
+    for (QWindow *w : std::as_const(shown)) {
+        w->hide();
+    }
+    for (auto it = shown.crbegin(); it != shown.crend(); ++it) {
+        (*it)->show();
+    }
+    if (focused && shown.contains(focused)) {
+        focused->requestActivate();
+    }
+}
+
+int32_t run_qt_app(rust::Str app_id, rust::Str icon_path, bool start_hidden)
 {
     static int argc = 1;
     static char arg0[] = "megasip";
@@ -25,9 +76,9 @@ int32_t run_qt_app(rust::Str app_id, bool start_hidden)
     QApplication::setApplicationName(QStringLiteral("megasip"));
     QApplication::setApplicationDisplayName(QStringLiteral("MegaSIP"));
     QApplication::setOrganizationDomain(QStringLiteral("megasip.org"));
-    QApplication::setDesktopFileName(QString::fromUtf8(app_id.data(), app_id.size()));
+    QApplication::setDesktopFileName(fromRust(app_id));
     QApplication app(argc, argv);
-    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("org.megasip.MegaSIP"), QIcon::fromTheme(QStringLiteral("call-start"))));
+    QApplication::setWindowIcon(iconFor(fromRust(icon_path)));
     QApplication::setQuitOnLastWindowClosed(false);
 
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {

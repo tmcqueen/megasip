@@ -1,5 +1,6 @@
 //! MegaSIP: a voice-only port of MicroSIP for KDE Plasma.
 
+mod accounticon;
 mod appcpp;
 mod bridge;
 mod cli;
@@ -247,8 +248,19 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_secs(3));
         std::process::exit(0);
     });
-    let code =
-        appcpp::ffi::run_qt_app("org.megasip.MegaSIP", minimized || settings.start_minimized);
+    // A window opened with an account that has its own icon shows up as that account in
+    // the taskbar from the start.
+    let identity = accounticon::identity_for(
+        START_ACCOUNT
+            .get()
+            .and_then(|id| settings.accounts.iter().find(|a| &a.id == id)),
+    );
+    tracing::debug!("app_id {} icon {:?}", identity.app_id, identity.icon);
+    let code = appcpp::ffi::run_qt_app(
+        &identity.app_id,
+        &identity.icon_str(),
+        minimized || settings.start_minimized,
+    );
     ipc::cleanup();
     std::process::exit(code);
 }

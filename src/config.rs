@@ -127,6 +127,9 @@ pub struct Settings {
     // Application
     pub start_minimized: bool,
     pub bring_to_front: bool,
+    /// Set when the wallet couldn't be read or written (shown in Preferences); not saved.
+    #[serde(skip_serializing, skip_deserializing)]
+    pub secret_error: String,
     /// Old single switch; migrated to the log_* fields on load.
     #[serde(skip_serializing)]
     pub enable_log: bool,
@@ -176,6 +179,7 @@ impl Default for Settings {
             user_agent: String::new(),
             start_minimized: false,
             bring_to_front: true,
+            secret_error: String::new(),
             enable_log: false,
             log_sip_level: "info".into(),
             log_audio_level: "warn".into(),
@@ -213,7 +217,49 @@ impl Settings {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
         s.normalize();
+        if !crate::secrets::disabled() {
+            s.load_passwords();
+        }
         s
+    }
+
+    /// Fill passwords from the wallet, moving any still in settings.json (older versions
+    /// stored them there) into the wallet and out of the file.
+    fn load_passwords(&mut self) {
+        let mut migrated = false;
+        let mut failed: Option<String> = None;
+        for a in &mut self.accounts {
+            if !a.password.is_empty() {
+                match crate::secrets::store(&a.id, &a.title(), &a.password) {
+                    Ok(()) => {
+                        remember_stored(&a.id, &a.password);
+                        migrated = true;
+                    }
+                    Err(e) => failed = Some(e),
+                }
+                continue;
+            }
+            match crate::secrets::load(&a.id) {
+                Ok(Some(p)) => {
+                    remember_stored(&a.id, &p);
+                    a.password = p;
+                }
+                Ok(None) => {}
+                Err(e) => failed = Some(e),
+            }
+        }
+        if migrated && failed.is_none() {
+            // Rewrite settings.json without the plaintext passwords.
+            if let Err(e) = self.write_file() {
+                tracing::error!("couldn't rewrite settings without passwords: {e}");
+            } else {
+                tracing::info!("moved SIP passwords from settings.json into the wallet");
+            }
+        }
+        if let Some(e) = failed {
+            tracing::error!("{e}");
+            self.secret_error = e;
+        }
     }
 
     pub fn normalize(&mut self) {
@@ -243,17 +289,63 @@ impl Settings {
         }
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
+    /// Save settings. Passwords go to the wallet; settings.json never contains them.
+    /// If the wallet can't take a password, nothing is written and the error is returned.
+    pub fn save(&self) -> Result<(), String> {
+        if !crate::secrets::disabled() {
+            for a in &self.accounts {
+                if already_stored(&a.id, &a.password) {
+                    continue;
+                }
+                crate::secrets::store(&a.id, &a.title(), &a.password)?;
+                remember_stored(&a.id, &a.password);
+            }
+            let keep: Vec<String> = self.accounts.iter().map(|a| a.id.clone()).collect();
+            if let Err(e) = crate::secrets::prune(&keep) {
+                tracing::warn!("couldn't tidy old wallet entries: {e}");
+            }
+        }
+        self.write_file().map_err(|e| format!("Could not save settings: {e}"))
+    }
+
+    fn write_file(&self) -> std::io::Result<()> {
+        let mut on_disk = self.clone();
+        if !crate::secrets::disabled() {
+            for a in &mut on_disk.accounts {
+                a.password.clear();
+            }
+        }
         let dir = config_dir();
         std::fs::create_dir_all(&dir)?;
         let tmp = dir.join("settings.json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(self).unwrap_or_default())?;
+        let _ = std::fs::remove_file(&tmp);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            // The file holds SIP passwords.
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            use std::os::unix::fs::OpenOptionsExt;
+            // Owner-only from the moment it exists.
+            opts.mode(0o600);
+        }
+        {
+            use std::io::Write;
+            let mut f = opts.open(&tmp)?;
+            f.write_all(serde_json::to_string_pretty(&on_disk).unwrap_or_default().as_bytes())?;
+            f.sync_all()?;
         }
         std::fs::rename(tmp, Self::path())
     }
+}
+
+/// Passwords known to be in the wallet already (so routine saves don't rewrite them).
+static STORED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> = std::sync::Mutex::new(None);
+
+fn remember_stored(id: &str, password: &str) {
+    let mut g = STORED.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(Default::default).insert(id.to_string(), password.to_string());
+}
+
+fn already_stored(id: &str, password: &str) -> bool {
+    let g = STORED.lock().unwrap_or_else(|e| e.into_inner());
+    g.as_ref().and_then(|m| m.get(id)).is_some_and(|p| p == password)
 }

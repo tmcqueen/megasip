@@ -219,6 +219,14 @@ impl cxx_qt::Initialize for qobject::Phone {
         self.as_mut().publish_calls();
         self.as_mut().refresh_devices();
 
+        // A wallet problem at startup (locked, missing) shows up in the window.
+        let secret_error = self.rust().settings.secret_error.clone();
+        if !secret_error.is_empty() {
+            let _ = self.qt_thread().queue(move |mut p| {
+                p.as_mut().error_message(QString::from(&format!("Passwords: {secret_error}")))
+            });
+        }
+
         // Engine events -> Qt thread.
         let qt = self.qt_thread();
         std::thread::Builder::new()
@@ -404,7 +412,7 @@ impl qobject::Phone {
 
     fn apply_settings(mut self: Pin<&mut Self>, mut s: Settings) -> Result<(), String> {
         s.normalize();
-        s.save().map_err(|e| format!("Could not save settings: {e}"))?;
+        s.save()?;
         self.rust().send(Command::Configure(Box::new(s.clone())));
         crate::logging::apply(&s);
         let dnd = s.dnd;

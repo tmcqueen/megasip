@@ -168,6 +168,9 @@ pub struct PhoneRust {
     pending_dial: Option<String>,
     /// What's sent instead of the microphone (`--source`), if anything.
     source: Option<crate::media::source::Source>,
+    /// A source handed over with a call (`megasip -a foo --source x 123` while this window
+    /// has foo) lasts for that call: this is what to go back to once the calls are over.
+    restore_source: Option<Option<crate::media::source::Source>>,
     cmd: Option<UnboundedSender<Command>>,
     hub: Option<Arc<AudioHub>>,
     settings: Settings,
@@ -415,6 +418,9 @@ impl qobject::Phone {
                 }
                 if self.rust().calls.is_empty() {
                     self.as_mut().set_conference(false);
+                    if let Some(prev) = self.as_mut().rust_mut().restore_source.take() {
+                        self.as_mut().use_source(prev);
+                    }
                 }
                 self.as_mut().publish_history();
                 self.as_mut().publish_calls();
@@ -480,8 +486,9 @@ impl qobject::Phone {
         }
     }
 
-    /// `megasip -a foo --source <what>` while this window has foo: send `<what>` from now on.
-    /// Refused (with a message) while a call is up, since the new source would go out on it.
+    /// `megasip -a foo --source <what> [number]` while this window has foo: send `<what>` on
+    /// the next call, then go back to what the window had. Refused (with a message) while a
+    /// call is up, since the new source would go out on that call too.
     fn switch_source(mut self: Pin<&mut Self>, arg: &str) -> bool {
         if self.rust().source.as_ref().map(|s| s.arg()).as_deref() == Some(arg) {
             return true;
@@ -493,20 +500,36 @@ impl qobject::Phone {
                 return false;
             }
         };
-        let label = src.label();
         if !self.rust().calls.is_empty() {
             self.as_mut().error_message(qs(&format!(
-                "Not switching to {label}: a call is in progress and would get it too. Hang up and try again."
+                "Not switching to {}: a call is in progress and would get it too. Hang up and try again.",
+                src.label()
             )));
             return false;
         }
-        if let Some(h) = &self.rust().hub {
-            h.set_source(Some(src.clone()));
+        {
+            let mut r = self.as_mut().rust_mut();
+            if r.restore_source.is_none() {
+                let prev = r.source.clone();
+                r.restore_source = Some(prev);
+            }
         }
-        self.as_mut().set_source_label(qs(&label));
-        self.as_mut().set_source_detail(qs(&src.detail()));
-        self.as_mut().rust_mut().source = Some(src);
+        self.as_mut().use_source(Some(src));
         true
+    }
+
+    /// Send `src` instead of the microphone (None: the microphone), and show it.
+    fn use_source(mut self: Pin<&mut Self>, src: Option<crate::media::source::Source>) {
+        if let Some(h) = &self.rust().hub {
+            h.set_source(src.clone());
+        }
+        let (label, detail) = src
+            .as_ref()
+            .map(|s| (s.label(), s.detail()))
+            .unwrap_or_default();
+        self.as_mut().set_source_label(qs(&label));
+        self.as_mut().set_source_detail(qs(&detail));
+        self.as_mut().rust_mut().source = src;
     }
 
     fn publish_calls(mut self: Pin<&mut Self>) {

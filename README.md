@@ -119,9 +119,10 @@ megasip --minimized
 ### Sending a file or test signal instead of the microphone
 
 `--source` sends something else in place of the microphone, for every call in that
-window. With `-a`, if another window already has that account, that window switches to the
-source and makes the call (it won't switch while a call is up, since the source would go
-out on that call too). Otherwise it opens a new window.
+window. With `-a`, if another window already has that account, that window makes the call with
+the source and goes back to what it was sending (usually the microphone) once the call
+ends. It won't switch while a call is up, since the source would go out on that call too.
+Otherwise it opens a new window, which keeps the source for all its calls.
 
 ```sh
 megasip -a work --source greeting.mp3 1002   # .wav, .ogg or .mp3, looped from the top of each call

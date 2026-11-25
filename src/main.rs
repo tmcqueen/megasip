@@ -30,7 +30,7 @@ Usage:
   megasip                       open a window with no account active
   megasip -a, --account <name>  open a window with that account active (its short name);
                                 if another window already has it, that window comes to the front
-                                and makes the call (with --source, it switches to that source)
+                                and makes the call (with --source, for that call only)
   megasip --source <what>       send <what> instead of the microphone: a .wav, .ogg or .mp3 file,
                                 milli (1004 Hz test tone), pink, white (noise) or tone:<hz>
   megasip --minimized           start in the system tray

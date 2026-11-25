@@ -48,6 +48,7 @@ struct State {
     null_audio: bool,
     /// Dominant frequency of what we play (zero crossings), for tests.
     spk_freq: f32,
+    last_stats: Option<super::StreamStats>,
 }
 
 pub struct AudioHub {
@@ -208,6 +209,7 @@ impl AudioHub {
             errors: Vec::new(),
             null_audio: std::env::var_os("MEGASIP_NULL_AUDIO").is_some(),
             spk_freq: 0.0,
+            last_stats: None,
         }));
         let st2 = st.clone();
         std::thread::Builder::new()
@@ -246,7 +248,22 @@ impl AudioHub {
     }
 
     pub fn remove_stream(&self, id: u64) {
-        self.st.lock().unwrap_or_else(|e| e.into_inner()).streams.retain(|x| x.id != id);
+        let mut g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = g.streams.iter().find(|x| x.id == id) {
+            let mut last = s.stats();
+            last.ended = true;
+            g.last_stats = Some(last);
+        }
+        g.streams.retain(|x| x.id != id);
+    }
+
+    /// Live stats for every call with media, plus the last call that ended.
+    pub fn stats(&self) -> (Vec<super::StreamStats>, Option<super::StreamStats>) {
+        let (streams, last) = {
+            let g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+            (g.streams.clone(), g.last_stats.clone())
+        };
+        (streams.iter().map(|s| s.stats()).collect(), last)
     }
 
     pub fn set_conference(&self, on: bool) {

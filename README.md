@@ -20,7 +20,7 @@ optional STUN) · dial pad with DTMF (RFC 2833, SIP INFO or in-band) · several 
 once with hold/resume, mute, blind and attended transfer, and a local conference ·
 call history (missed / incoming / outgoing) · contacts (imports MicroSIP's
 `Contacts.xml` or CSV) · auto answer (all calls, or when the server asks) · do not
-disturb · call forwarding (always / busy / no answer) · call waiting · single-call mode
+disturb · call forwarding (always / busy / no answer) · call waiting · single-call mode · call length limit
 · deny incoming · SRTP (SDES, optional or mandatory) · ringtone on its own device ·
 redial · voicemail button · `tel:` / `sip:` / `callto:` links · start at login.
 
@@ -85,6 +85,27 @@ Files:
 - `~/.config/megasip/settings.json` holds settings and accounts (mode 0600, because it
   contains SIP passwords).
 - `~/.local/share/megasip/` holds history, contacts and the optional log.
+
+## Debug window
+
+Ctrl+Shift+D, **Debug window…** in the tray menu, **Open debug window** under Preferences →
+Logging, or the ⓘ button on a call. It has four tabs:
+
+- **SIP trace:** every SIP message sent and received (the last 2,000 are kept even
+  while the window is closed), with search, a full-message view, copy and save.
+- **Call ladder:** pick a call (the newest is shown by default) and see its sequence
+  diagram, with the time between messages. Click an arrow to read that message.
+- **Call quality:** live per-call figures, with the last minute graphed.
+  - Codec and SRTP.
+  - Packets and bytes each way.
+  - Loss, jitter and playout buffer depth.
+  - Concealed packets, late and duplicate packets, underruns and drift corrections.
+  - SRTP failures and DTMF.
+  - An estimated MOS (simplified E-model).
+
+  The last call's figures stay after it ends.
+- **Logs:** recent log events, filtered by SIP/audio, level and text. Choosing Debug
+  captures more detail from then on.
 
 ## Logging
 

@@ -148,7 +148,19 @@ impl Transports {
         self.streams.remove(&id);
     }
 
+    /// "UDP" / "TCP" / "TLS" for a flow.
+    pub fn flow_name(&self, flow: Flow) -> &'static str {
+        match flow {
+            Flow::Udp => "UDP",
+            Flow::Stream(id) => self.streams.get(&id).map(|s| s.proto.via_name()).unwrap_or("TCP"),
+        }
+    }
+
     pub fn send(&self, flow: Flow, dest: SocketAddr, data: &[u8]) {
+        // Keep-alives (CRLF) and STUN are not SIP messages.
+        if data.len() > 4 && !super::stun::is_stun(data) {
+            crate::debug::sip("out", self.flow_name(flow), dest, data);
+        }
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!("SEND {:?} -> {dest}\n{}", flow, String::from_utf8_lossy(data));
         }

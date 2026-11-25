@@ -343,21 +343,37 @@ impl Engine {
         } else {
             self.settings.default_account.clone()
         };
-        let acc_id = if self.accs.get(&acc_id).is_some_and(|a| a.ready()) { acc_id } else { "local".to_string() };
+        let mut acc_id = if self.accs.get(&acc_id).is_some_and(|a| a.ready()) { acc_id } else { "local".to_string() };
         let Some(acc) = self.accs.get(&acc_id) else { return };
         let domain = acc.cfg.sip_domain();
         let uri = target_uri(number, &acc.cfg.dialing_prefix, &domain, acc.proto);
-        // Where does it go: the account's server, or (local account) straight to the host.
-        let peer = if let (false, Some(dest)) = (acc.local_only, acc.dest) {
+        // Where it goes (RFC 3261 §8.1.2, like MicroSIP/pjsip): through the account when it
+        // has an outbound proxy or the address is on its own domain/server; otherwise
+        // straight to the host in the address.
+        let hp = msg::uri_hostport(&uri);
+        let same_place = |other: &str| {
+            let o = other.trim().trim_start_matches("sip:").split(';').next().unwrap_or("");
+            let (oh, op) = transport::split_host_port(o);
+            let (th, tp) = transport::split_host_port(&hp);
+            !oh.is_empty() && th.eq_ignore_ascii_case(oh) && (tp.is_none() || tp == op || (op.is_none() && tp == Some(acc.proto.default_port())))
+        };
+        let ours = !acc.local_only && (!acc.cfg.proxy.trim().is_empty() || same_place(&domain) || same_place(&acc.cfg.server));
+        let peer = if let (true, Some(dest)) = (ours, acc.dest) {
             (acc.flow, dest)
         } else {
-            let hp = msg::uri_hostport(&uri);
             let (h, p) = transport::split_host_port(&hp);
             use std::net::ToSocketAddrs;
-            match (h, p.unwrap_or(5060)).to_socket_addrs().ok().and_then(|mut it| it.find(|a| a.is_ipv4())) {
-                Some(a) => (Flow::Udp, a),
+            let resolved = (h, p.unwrap_or(5060)).to_socket_addrs().ok().and_then(|mut it| it.find(|a| a.is_ipv4()));
+            match resolved {
+                Some(a) => {
+                    // A direct UDP call can't use a TCP/TLS account's Contact.
+                    if acc.proto != Proto::Udp {
+                        acc_id = "local".to_string();
+                    }
+                    (Flow::Udp, a)
+                }
                 None => {
-                    self.emit(Event::Error(format!("No account is online and {hp} is not reachable")));
+                    self.emit(Event::Error(format!("Can't reach {hp}")));
                     return;
                 }
             }

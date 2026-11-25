@@ -129,6 +129,7 @@ Kirigami.ApplicationWindow {
             Platform.MenuItem { text: "Redial"; enabled: !!root.settings.lastNumber; onTriggered: phone.redial() }
             Platform.MenuSeparator {}
             Platform.MenuItem { text: "Preferences…"; onTriggered: prefs.openPage() }
+            Platform.MenuItem { text: "Debug window…"; onTriggered: debugWin.openTab() }
             Platform.MenuItem { text: "Quit"; onTriggered: phone.quit() }
         }
     }
@@ -145,6 +146,11 @@ Kirigami.ApplicationWindow {
         devices: root.devices
         status: root.accounts
         transientParent: root
+        onDebugRequested: debugWin.openTab(0)
+    }
+    DebugWindow {
+        id: debugWin
+        phone: phone
     }
     // First run: nothing to call with yet, so go straight to adding an account.
     Timer {
@@ -156,7 +162,8 @@ Kirigami.ApplicationWindow {
     property int shotStep: -1
     onShotStepChanged: {
         if (shotStep < 3) { prefs.hide(); root.currentTab = shotStep }
-        else prefs.openPage(shotStep - 3)
+        else if (shotStep < 10) prefs.openPage(shotStep - 3)
+        else { prefs.forceClose = true; prefs.close(); debugWin.openTab(shotStep - 10) }
     }
 
     IncomingWindow {
@@ -243,6 +250,7 @@ Kirigami.ApplicationWindow {
                 selected: root.selectedCall
                 visible: root.calls.length > 0
                 onTransferRequested: id => transferDialog.openFor(id)
+                onQualityRequested: debugWin.openTab(2)
                 formatDuration: root.formatDuration
             }
         }
@@ -277,6 +285,7 @@ Kirigami.ApplicationWindow {
     Shortcut { sequence: "Ctrl+2"; onActivated: root.currentTab = 1 }
     Shortcut { sequence: "Ctrl+3"; onActivated: root.currentTab = 2 }
     Shortcut { sequence: "Ctrl+,"; onActivated: prefs.openPage() }
+    Shortcut { sequence: "Ctrl+Shift+D"; onActivated: debugWin.openTab() }
     Shortcut {
         sequence: "Escape"
         enabled: root.selectedCall !== null && root.currentTab === 0

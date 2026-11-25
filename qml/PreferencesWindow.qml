@@ -31,6 +31,7 @@ QQC2.ApplicationWindow {
     property int selAcc: 0
     property bool showAdvancedAccount: false
     property bool forceClose: false
+    signal debugRequested()
 
     readonly property var logLevels: ["off", "error", "warn", "info", "debug", "trace"]
     readonly property var logLevelNames: ["Off", "Errors", "Warnings", "Info", "Debug", "Trace"]
@@ -405,7 +406,7 @@ QQC2.ApplicationWindow {
                         }
                         PrefField {
                             label: "Transport"
-                            QQC2.ComboBox {
+                            QQC2.ComboBox { wheelEnabled: false;
                                 Layout.fillWidth: true
                                 model: ["Auto (DNS)", "UDP", "TCP", "TLS"]
                                 currentIndex: Math.max(0, ["auto", "udp", "tcp", "tls"].indexOf(win.acc() ? win.acc().transport || "auto" : "auto"))
@@ -414,7 +415,7 @@ QQC2.ApplicationWindow {
                         }
                         PrefField {
                             label: "Media encryption (SRTP)"
-                            QQC2.ComboBox {
+                            QQC2.ComboBox { wheelEnabled: false;
                                 Layout.fillWidth: true
                                 model: ["Off", "Optional", "Mandatory"]
                                 currentIndex: Math.max(0, ["off", "optional", "mandatory"].indexOf(win.acc() ? win.acc().srtp || "off" : "off"))
@@ -423,13 +424,13 @@ QQC2.ApplicationWindow {
                         }
                         PrefField {
                             label: "Register every"
-                            QQC2.SpinBox { from: 30; to: 86400; editable: true; value: win.acc() ? win.acc().registerRefresh || 300 : 300; onValueModified: win.setAcc("registerRefresh", value) }
+                            QQC2.SpinBox { wheelEnabled: false; from: 30; to: 86400; editable: true; value: win.acc() ? win.acc().registerRefresh || 300 : 300; onValueModified: win.setAcc("registerRefresh", value) }
                             QQC2.Label { text: "seconds" }
                         }
                         PrefField {
                             label: "Keep-alive every"
                             hint: "0 turns it off"
-                            QQC2.SpinBox { from: 0; to: 3600; editable: true; value: win.acc() ? (win.acc().keepAlive ?? 15) : 15; onValueModified: win.setAcc("keepAlive", value) }
+                            QQC2.SpinBox { wheelEnabled: false; from: 0; to: 3600; editable: true; value: win.acc() ? (win.acc().keepAlive ?? 15) : 15; onValueModified: win.setAcc("keepAlive", value) }
                             QQC2.Label { text: "seconds" }
                         }
                         PrefField {
@@ -496,21 +497,21 @@ QQC2.ApplicationWindow {
                     columns: 2
                     columnSpacing: Kirigami.Units.largeSpacing
                     QQC2.Label { text: "Speaker" }
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         Layout.fillWidth: true
                         model: ["System default"].concat(win.devices.outputs)
                         currentIndex: win.devIndex(win.devices.outputs, win.draft.speakerDevice || "")
                         onActivated: i => win.set("speakerDevice", i === 0 ? "" : win.devices.outputs[i - 1])
                     }
                     QQC2.Label { text: "Microphone" }
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         Layout.fillWidth: true
                         model: ["System default"].concat(win.devices.inputs)
                         currentIndex: win.devIndex(win.devices.inputs, win.draft.microphoneDevice || "")
                         onActivated: i => win.set("microphoneDevice", i === 0 ? "" : win.devices.inputs[i - 1])
                     }
                     QQC2.Label { text: "Ring on" }
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         Layout.fillWidth: true
                         model: ["System default"].concat(win.devices.outputs)
                         currentIndex: win.devIndex(win.devices.outputs, win.draft.ringDevice || "")
@@ -539,7 +540,7 @@ QQC2.ApplicationWindow {
                 }
                 RowLayout {
                     QQC2.Label { text: "Volume" }
-                    QQC2.Slider {
+                    QQC2.Slider { wheelEnabled: false;
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 12
                         from: 0; to: 100; stepSize: 5
                         value: win.draft.ringVolume ?? 100
@@ -601,7 +602,7 @@ QQC2.ApplicationWindow {
                 title: "Auto answer"
                 description: "Pick up incoming calls without touching anything."
                 RowLayout {
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         id: aa
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 14
                         textRole: "t"
@@ -610,7 +611,7 @@ QQC2.ApplicationWindow {
                         onActivated: i => win.set("autoAnswer", ["off", "all", "header"][i])
                     }
                     QQC2.Label { text: "after"; visible: aa.currentIndex > 0 }
-                    QQC2.SpinBox {
+                    QQC2.SpinBox { wheelEnabled: false;
                         visible: aa.currentIndex > 0
                         from: 0; to: 60; editable: true
                         value: win.draft.autoAnswerDelay || 0
@@ -635,7 +636,7 @@ QQC2.ApplicationWindow {
             PrefSection {
                 title: "Keypad (DTMF)"
                 description: "How key presses reach the other side during a call. Auto works with almost every system."
-                QQC2.ComboBox {
+                QQC2.ComboBox { wheelEnabled: false;
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 14
                     model: ["Auto", "RFC 2833", "SIP INFO", "In-band audio"]
                     currentIndex: Math.max(0, ["auto", "rfc2833", "info", "inband"].indexOf(win.draft.dtmfMethod || "auto"))
@@ -643,16 +644,26 @@ QQC2.ApplicationWindow {
                 }
             }
             PrefSection {
-                title: "Hang up automatically"
-                description: "End calls after a set time. 0 means never."
+                title: "Call length limit"
+                description: "Ends a call once it has been connected for this long, counted from when the other side answers. Has nothing to do with what happens after a call ends."
                 last: true
+                QQC2.CheckBox {
+                    id: limitOn
+                    text: "Limit how long a call can last"
+                    checked: (win.draft.autoHangupSecs || 0) > 0
+                    onToggled: win.set("autoHangupSecs", checked ? Math.max(60, limitMinutes.value * 60) : 0)
+                }
                 RowLayout {
-                    QQC2.SpinBox {
-                        from: 0; to: 86400; editable: true
-                        value: win.draft.autoHangupSecs || 0
-                        onValueModified: win.set("autoHangupSecs", value)
+                    enabled: limitOn.checked
+                    Layout.leftMargin: Kirigami.Units.gridUnit * 1.5
+                    QQC2.Label { text: "End calls" }
+                    QQC2.SpinBox { wheelEnabled: false;
+                        id: limitMinutes
+                        from: 1; to: 1440; editable: true
+                        value: Math.max(1, Math.round((win.draft.autoHangupSecs || 3600) / 60))
+                        onValueModified: win.set("autoHangupSecs", value * 60)
                     }
-                    QQC2.Label { text: "seconds" }
+                    QQC2.Label { text: "minutes after they're answered" }
                 }
             }
         }
@@ -677,7 +688,7 @@ QQC2.ApplicationWindow {
                 description: "Send incoming calls to another number."
                 RowLayout {
                     Layout.fillWidth: true
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         id: fwd
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 11
                         model: ["Off", "Always", "When busy", "When not answered"]
@@ -696,7 +707,7 @@ QQC2.ApplicationWindow {
                 RowLayout {
                     visible: fwd.currentIndex === 3
                     QQC2.Label { text: "after" }
-                    QQC2.SpinBox {
+                    QQC2.SpinBox { wheelEnabled: false;
                         from: 1; to: 120; editable: true
                         value: win.draft.forwardingDelay || 20
                         onValueModified: win.set("forwardingDelay", value)
@@ -708,7 +719,7 @@ QQC2.ApplicationWindow {
                 title: "Deny incoming calls"
                 description: "Turn calls away before they ring."
                 last: true
-                QQC2.ComboBox {
+                QQC2.ComboBox { wheelEnabled: false;
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 14
                     model: ["No", "From other domains", "All calls"]
                     currentIndex: Math.max(0, ["", "otherdomain", "all"].indexOf(win.draft.denyIncoming || ""))
@@ -763,7 +774,7 @@ QQC2.ApplicationWindow {
                 description: "The defaults work for almost everyone. Change them if a firewall needs fixed ports."
                 RowLayout {
                     QQC2.Label { text: "SIP port" }
-                    QQC2.SpinBox {
+                    QQC2.SpinBox { wheelEnabled: false;
                         from: 0; to: 65535; editable: true
                         textFromValue: (v, l) => v === 0 ? "Any" : String(v)
                         valueFromText: (t, l) => t === "Any" ? 0 : parseInt(t) || 0
@@ -773,14 +784,14 @@ QQC2.ApplicationWindow {
                 }
                 RowLayout {
                     QQC2.Label { text: "Media (RTP) ports" }
-                    QQC2.SpinBox {
+                    QQC2.SpinBox { wheelEnabled: false;
                         from: 1024; to: 65000; editable: true
                         textFromValue: (v, l) => String(v)
                         value: win.draft.rtpPortMin || 10000
                         onValueModified: win.set("rtpPortMin", value)
                     }
                     QQC2.Label { text: "to" }
-                    QQC2.SpinBox {
+                    QQC2.SpinBox { wheelEnabled: false;
                         from: 1026; to: 65535; editable: true
                         textFromValue: (v, l) => String(v)
                         value: win.draft.rtpPortMax || 20000
@@ -840,7 +851,7 @@ QQC2.ApplicationWindow {
                     columns: 3
                     columnSpacing: Kirigami.Units.largeSpacing
                     QQC2.Label { text: "SIP and calls" }
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 9
                         model: win.logLevelNames
                         currentIndex: Math.max(0, win.logLevels.indexOf(win.draft.logSipLevel || "info"))
@@ -848,7 +859,7 @@ QQC2.ApplicationWindow {
                     }
                     QQC2.Label { text: "Debug shows every SIP message"; opacity: 0.7; font: Kirigami.Theme.smallFont }
                     QQC2.Label { text: "Audio" }
-                    QQC2.ComboBox {
+                    QQC2.ComboBox { wheelEnabled: false;
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 9
                         model: win.logLevelNames
                         currentIndex: Math.max(0, win.logLevels.indexOf(win.draft.logAudioLevel || "warn"))
@@ -864,6 +875,11 @@ QQC2.ApplicationWindow {
                     text: "Write log files"
                     checked: !!win.draft.logToFiles
                     onToggled: win.set("logToFiles", checked)
+                }
+                QQC2.Button {
+                    text: "Open debug window"
+                    icon.name: "debug-run"
+                    onClicked: win.debugRequested()
                 }
                 QQC2.Button {
                     text: "Open log folder"

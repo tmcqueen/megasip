@@ -850,6 +850,7 @@ impl Engine {
                     }
                     return;
                 }
+                crate::debug::sip("in", self.tr.flow_name(flow), from, &data);
                 let Some(m) = SipMsg::parse(&data) else {
                     tracing::debug!("unparseable datagram from {from}");
                     return;

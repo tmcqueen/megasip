@@ -88,6 +88,18 @@ pub mod qobject {
         #[qinvokable]
         fn log_folder(self: &Phone) -> QString;
         #[qinvokable]
+        fn debug_sip(self: &Phone, since: i64) -> QString;
+        #[qinvokable]
+        fn debug_logs(self: &Phone, since: i64) -> QString;
+        #[qinvokable]
+        fn debug_quality(self: &Phone) -> QString;
+        #[qinvokable]
+        fn debug_clear(self: &Phone);
+        #[qinvokable]
+        fn debug_set_capture(self: &Phone, level: &QString);
+        #[qinvokable]
+        fn save_text(self: &Phone, path: &QString, text: &QString) -> bool;
+        #[qinvokable]
         fn quit(self: Pin<&mut Phone>);
 
         #[qsignal]
@@ -623,6 +635,48 @@ impl qobject::Phone {
         if let Err(e) = res {
             self.as_mut().error_message(qs(&format!("Autostart: {e}")));
         }
+    }
+
+    fn debug_sip(&self, since: i64) -> QString {
+        qs(&crate::debug::sip_since(since.max(0) as u64))
+    }
+
+    fn debug_logs(&self, since: i64) -> QString {
+        qs(&crate::debug::logs_since(since.max(0) as u64))
+    }
+
+    fn debug_quality(&self) -> QString {
+        let (live, last) = self.rust().hub.as_ref().map(|h| h.stats()).unwrap_or_default();
+        let (mic, spk) = self.rust().hub.as_ref().map(|h| h.levels()).unwrap_or_default();
+        // Name each stream after its call.
+        let calls = &self.rust().calls;
+        let label = |id: u64| calls.get(&id).map(|c| if c.name.is_empty() { c.number.clone() } else { format!("{} ({})", c.name, c.number) });
+        let named = |s: &crate::media::StreamStats| {
+            let mut v = serde_json::to_value(s).unwrap_or_default();
+            v["label"] = serde_json::Value::String(label(s.id).unwrap_or_else(|| format!("Call {}", s.id)));
+            v
+        };
+        let json = serde_json::json!({
+            "streams": live.iter().map(named).collect::<Vec<_>>(),
+            "last": last.as_ref().map(named),
+            "mic": mic,
+            "speaker": spk,
+        });
+        qs(&json.to_string())
+    }
+
+    fn debug_clear(&self) {
+        crate::debug::clear();
+    }
+
+    fn debug_set_capture(&self, level: &QString) {
+        crate::logging::set_capture_level(&level.to_string());
+    }
+
+    fn save_text(&self, path: &QString, text: &QString) -> bool {
+        let p = path.to_string();
+        let p = p.strip_prefix("file://").unwrap_or(&p).to_string();
+        std::fs::write(p, text.to_string()).is_ok()
     }
 
     fn log_folder(&self) -> QString {

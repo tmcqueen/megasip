@@ -107,7 +107,8 @@ From the command line:
 megasip                         # a window with no account active (or the idle one, raised)
 megasip -a work                 # a window with the account whose short name is "work";
                                 # if another window has it, that window comes to the front
-megasip -a work 1002            # ...and call 1002 once it's registered
+megasip -a work 1002            # ...and call 1002 once it's registered (from that window,
+                                # if one already has "work")
 megasip 1002                    # call from the window with the default account (or sip:…, tel:…)
 megasip --answer                # answer the ringing call
 megasip --hangup                # hang up all calls, in every window
@@ -118,7 +119,9 @@ megasip --minimized
 ### Sending a file or test signal instead of the microphone
 
 `--source` sends something else in place of the microphone, for every call in that
-window. It always opens a new window.
+window. With `-a`, if another window already has that account, that window switches to the
+source and makes the call (it won't switch while a call is up, since the source would go
+out on that call too). Otherwise it opens a new window.
 
 ```sh
 megasip -a work --source greeting.mp3 1002   # .wav, .ogg or .mp3, looped from the top of each call

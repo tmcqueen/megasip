@@ -30,6 +30,7 @@ Usage:
   megasip                       open a window with no account active
   megasip -a, --account <name>  open a window with that account active (its short name);
                                 if another window already has it, that window comes to the front
+                                and makes the call (with --source, it switches to that source)
   megasip --source <what>       send <what> instead of the microphone: a .wav, .ogg or .mp3 file,
                                 milli (1004 Hz test tone), pink, white (noise) or tone:<hz>
   megasip --minimized           start in the system tray
@@ -141,16 +142,15 @@ fn main() {
                     .iter()
                     .find(|i| i.account_id.as_deref() == Some(acc.id.as_str()))
                 {
-                    if source.is_some() {
+                    // That window places the call (and switches to --source first).
+                    let src = SOURCE.get().map(|s| s.arg());
+                    let lines = ipc::handoff_lines(dial.as_deref(), src.as_deref());
+                    if !ipc::send_lines_to(holder.pid, &lines) {
                         fail(&format!(
-                            "{} is already active (pid {})",
+                            "{} is active in another MegaSIP (pid {}) that isn't taking calls from the command line (a --cli session?)",
                             acc.title(),
                             holder.pid
                         ));
-                    }
-                    ipc::send_to(holder.pid, "show");
-                    if let Some(d) = &dial {
-                        ipc::send_to(holder.pid, &format!("dial {d}"));
                     }
                     return;
                 }

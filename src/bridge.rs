@@ -166,6 +166,8 @@ pub struct PhoneRust {
     active: Option<String>,
     /// `megasip -a foo 1234`: dial once foo is registered.
     pending_dial: Option<String>,
+    /// What's sent instead of the microphone (`--source`), if anything.
+    source: Option<crate::media::source::Source>,
     cmd: Option<UnboundedSender<Command>>,
     hub: Option<Arc<AudioHub>>,
     settings: Settings,
@@ -229,6 +231,7 @@ impl cxx_qt::Initialize for qobject::Phone {
             hub.set_source(Some(src.clone()));
             self.as_mut().set_source_label(qs(&src.label()));
             self.as_mut().set_source_detail(qs(&src.detail()));
+            self.as_mut().rust_mut().source = Some(src.clone());
         }
         let db = match crate::db::open() {
             Ok(c) => {
@@ -432,7 +435,14 @@ impl qobject::Phone {
 
     fn on_ipc(mut self: Pin<&mut Self>, line: String) {
         let line = line.trim();
-        if let Some(target) = line.strip_prefix("dial ") {
+        if let Some(rest) = line.strip_prefix("dial ") {
+            let (target, source) = crate::ipc::split_dial(rest);
+            if let Some(src) = source {
+                if !self.as_mut().switch_source(src) {
+                    self.as_mut().activate_requested();
+                    return;
+                }
+            }
             let t = target
                 .trim()
                 .trim_start_matches("callto:")
@@ -462,9 +472,41 @@ impl qobject::Phone {
             self.quit();
         } else if let Some(e) = line.strip_prefix("error ") {
             self.as_mut().error_message(qs(e));
+        } else if let Some(src) = line.strip_prefix("source ") {
+            self.as_mut().switch_source(src.trim());
+            self.as_mut().activate_requested();
         } else {
             self.as_mut().activate_requested();
         }
+    }
+
+    /// `megasip -a foo --source <what>` while this window has foo: send `<what>` from now on.
+    /// Refused (with a message) while a call is up, since the new source would go out on it.
+    fn switch_source(mut self: Pin<&mut Self>, arg: &str) -> bool {
+        if self.rust().source.as_ref().map(|s| s.arg()).as_deref() == Some(arg) {
+            return true;
+        }
+        let src = match crate::media::source::Source::parse(arg) {
+            Ok(s) => s,
+            Err(e) => {
+                self.as_mut().error_message(qs(&e));
+                return false;
+            }
+        };
+        let label = src.label();
+        if !self.rust().calls.is_empty() {
+            self.as_mut().error_message(qs(&format!(
+                "Not switching to {label}: a call is in progress and would get it too. Hang up and try again."
+            )));
+            return false;
+        }
+        if let Some(h) = &self.rust().hub {
+            h.set_source(Some(src.clone()));
+        }
+        self.as_mut().set_source_label(qs(&label));
+        self.as_mut().set_source_detail(qs(&src.detail()));
+        self.as_mut().rust_mut().source = Some(src);
+        true
     }
 
     fn publish_calls(mut self: Pin<&mut Self>) {
@@ -632,7 +674,11 @@ impl qobject::Phone {
                         .and_then(|c| crate::db::holder(c, id).ok().flatten())
                 });
                 if let Some(pid) = holder {
-                    crate::ipc::send_to(pid, &format!("dial {d}"));
+                    let src = crate::SOURCE.get().map(|s| s.arg());
+                    crate::ipc::send_lines_to(
+                        pid,
+                        &crate::ipc::handoff_lines(Some(&d), src.as_deref()),
+                    );
                 }
                 return;
             }

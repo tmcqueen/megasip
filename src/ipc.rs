@@ -19,9 +19,45 @@ pub fn path_for(pid: u32) -> PathBuf {
 
 /// Send `line` to the window with this PID. Returns true if it took it.
 pub fn send_to(pid: u32, line: &str) -> bool {
-    match UnixStream::connect(path_for(pid)) {
-        Ok(mut s) => s.write_all(format!("{line}\n").as_bytes()).is_ok(),
+    send_at(&path_for(pid), &[line.to_string()])
+}
+
+fn send_at(path: &std::path::Path, lines: &[String]) -> bool {
+    let mut msg = String::new();
+    for l in lines {
+        msg.push_str(l);
+        msg.push('\n');
+    }
+    match UnixStream::connect(path) {
+        Ok(mut s) => s.write_all(msg.as_bytes()).is_ok(),
         Err(_) => false,
+    }
+}
+
+/// Send `lines` to the window with this PID over one connection, so it handles them in
+/// this order (separate connections are read by separate threads). True if it took them.
+pub fn send_lines_to(pid: u32, lines: &[String]) -> bool {
+    send_at(&path_for(pid), lines)
+}
+
+/// What to tell the window that already has `-a`'s account: switch to `source` (the
+/// `--source` argument) if given, then dial `dial`, or just come to the front.
+pub fn handoff_lines(dial: Option<&str>, source: Option<&str>) -> Vec<String> {
+    match (dial, source) {
+        (Some(d), Some(s)) => vec![format!("dial {d}\t{s}")],
+        (Some(d), None) => vec![format!("dial {d}")],
+        (None, Some(s)) => vec![format!("source {s}")],
+        (None, None) => vec!["show".into()],
+    }
+}
+
+/// The rest of a `dial` line: the target, and the source to call with if one came along
+/// (after a tab, which a number or URI can't contain).
+pub fn split_dial(rest: &str) -> (&str, Option<&str>) {
+    match rest.split_once('\t') {
+        Some((t, s)) if !s.trim().is_empty() => (t.trim(), Some(s.trim())),
+        Some((t, _)) => (t.trim(), None),
+        None => (rest.trim(), None),
     }
 }
 
@@ -67,6 +103,50 @@ pub fn cleanup() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn handoff_carries_the_number_and_the_source() {
+        assert_eq!(
+            handoff_lines(Some("3346661338"), Some("pink")),
+            ["dial 3346661338\tpink"]
+        );
+        assert_eq!(handoff_lines(Some("3346661338"), None), ["dial 3346661338"]);
+        assert_eq!(handoff_lines(None, Some("pink")), ["source pink"]);
+        assert_eq!(handoff_lines(None, None), ["show"]);
+    }
+
+    #[test]
+    fn dial_lines_split_back() {
+        for (d, s) in [
+            ("3346661338", Some("pink")),
+            ("sip:bob@example.com", Some("/home/t/My Sounds/a.wav")),
+            ("tel:+15551234", None),
+        ] {
+            let line = handoff_lines(Some(d), s).remove(0);
+            let rest = line.strip_prefix("dial ").unwrap();
+            assert_eq!(split_dial(rest), (d, s));
+        }
+        assert_eq!(split_dial(" 123 "), ("123", None));
+        assert_eq!(split_dial("123\t "), ("123", None));
+    }
+
+    #[test]
+    fn lines_on_one_connection_arrive_in_order() {
+        let dir = std::env::temp_dir().join(format!("megasip-ipc-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("s.sock");
+        let _ = std::fs::remove_file(&p);
+        let l = UnixListener::bind(&p).unwrap();
+        let mut lines = vec!["show".to_string()];
+        lines.extend(handoff_lines(Some("123"), Some("pink")));
+        assert!(send_at(&p, &lines));
+        let (c, _) = l.accept().unwrap();
+        let got: Vec<String> = BufReader::new(c).lines().map_while(Result::ok).collect();
+        assert_eq!(got, ["show", "dial 123\tpink"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn path_is_per_pid() {
         assert!(super::path_for(42)

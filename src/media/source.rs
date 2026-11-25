@@ -78,6 +78,18 @@ impl Source {
         }
     }
 
+    /// The `--source` argument that gives this source back (a file as its full path), for
+    /// handing it to a running window.
+    pub fn arg(&self) -> String {
+        match self {
+            Source::File { path, .. } => path.clone(),
+            Source::Tone(f) if *f == 1004.0 => "milli".into(),
+            Source::Tone(f) => format!("tone:{f}"),
+            Source::Pink => "pink".into(),
+            Source::White => "white".into(),
+        }
+    }
+
     /// For the UI: "bar.wav", "1004 Hz tone", "Pink noise"…
     pub fn label(&self) -> String {
         match self {
@@ -194,6 +206,25 @@ const PINK_RMS: f32 = 1.766;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arg_parses_back_to_the_same_source() {
+        for s in [
+            Source::Pink,
+            Source::White,
+            Source::Tone(1004.0),
+            Source::Tone(440.0),
+            Source::Tone(312.5),
+        ] {
+            assert_eq!(Source::parse(&s.arg()).unwrap(), s, "{}", s.arg());
+        }
+        assert_eq!(Source::Tone(1004.0).arg(), "milli");
+        let f = Source::File {
+            path: "/tmp/a b.wav".into(),
+            samples: Arc::new(Vec::new()),
+        };
+        assert_eq!(f.arg(), "/tmp/a b.wav");
+    }
 
     fn rms_dbfs(src: Source, secs: usize) -> (f32, i16) {
         let mut p = SourcePlayer::new(src);

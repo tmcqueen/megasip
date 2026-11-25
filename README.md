@@ -82,8 +82,11 @@ keystroke. On first run with no accounts, Preferences opens on Accounts.
 
 Files:
 
-- `~/.config/megasip/settings.json` holds settings and accounts (mode 0600, because it
-  contains SIP passwords).
+- `~/.config/megasip/settings.json` holds settings and accounts (owner-only), but no
+  passwords. SIP passwords are kept in KWallet (any Secret Service wallet works) as
+  "MegaSIP: <account>". Passwords that older versions left in the file are moved into the
+  wallet the next time MegaSIP starts. If the wallet can't be reached, Save fails and
+  shows the error; nothing is written in plain text.
 - `~/.local/share/megasip/` holds history, contacts and the optional log.
 
 ## Debug window

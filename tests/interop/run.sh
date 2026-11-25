@@ -10,6 +10,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../.."
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/megasip-interop.XXXXXX")"
 export INTEROP_WORK="$WORK"
+# Throwaway test accounts must not land in the real wallet.
+export MEGASIP_NO_KEYRING=1
 A="$WORK/ast"
 mkdir -p "$A"/{etc,run,log,spool,lib} "$WORK/phones"
 

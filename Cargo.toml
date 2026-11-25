@@ -28,6 +28,7 @@ lewton = "0.10.2"
 ctrlc = { version = "3.5.3", features = ["termination"] }
 venator = "1.1.0"
 tracing-log = "0.2"
+secret-service = { version = "6", features = ["crypto-rust"] }
 
 [build-dependencies]
 cxx-qt-build = "0.10"

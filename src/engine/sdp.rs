@@ -59,7 +59,10 @@ pub struct Fmt {
 
 fn rtpmap(f: Fmt) -> String {
     match f.codec {
-        CodecKind::Opus => format!("a=rtpmap:{} opus/48000/2\r\na=fmtp:{} useinbandfec=1;minptime=10\r\n", f.pt, f.pt),
+        CodecKind::Opus => format!(
+            "a=rtpmap:{} opus/48000/2\r\na=fmtp:{} useinbandfec=1;minptime=10\r\n",
+            f.pt, f.pt
+        ),
         CodecKind::G722 => format!("a=rtpmap:{} G722/8000\r\n", f.pt),
         CodecKind::Pcmu => format!("a=rtpmap:{} PCMU/8000\r\n", f.pt),
         CodecKind::Pcma => format!("a=rtpmap:{} PCMA/8000\r\n", f.pt),
@@ -83,7 +86,10 @@ pub fn build(local: &Local, fmts: &[Fmt], te: &[(u8, u32)]) -> String {
         s.push_str(&rtpmap(*f));
     }
     for (pt, clock) in te {
-        let _ = write!(s, "a=rtpmap:{pt} telephone-event/{clock}\r\na=fmtp:{pt} 0-16\r\n");
+        let _ = write!(
+            s,
+            "a=rtpmap:{pt} telephone-event/{clock}\r\na=fmtp:{pt} 0-16\r\n"
+        );
     }
     s.push_str("a=ptime:20\r\na=maxptime:150\r\n");
     if let Some((tag, suite, key)) = &local.crypto {
@@ -106,7 +112,10 @@ pub fn build(local: &Local, fmts: &[Fmt], te: &[(u8, u32)]) -> String {
 pub fn offer(local: &Local, codecs: &[CodecKind]) -> String {
     let fmts: Vec<Fmt> = codecs
         .iter()
-        .map(|&c| Fmt { codec: c, pt: c.static_pt().unwrap_or(OPUS_PT) })
+        .map(|&c| Fmt {
+            codec: c,
+            pt: c.static_pt().unwrap_or(OPUS_PT),
+        })
         .collect();
     let mut te = vec![(TE8K_PT, 8000)];
     if codecs.contains(&CodecKind::Opus) {
@@ -154,10 +163,22 @@ pub fn parse(body: &str) -> Option<Remote> {
             },
         };
         match (enc.as_str(), clock) {
-            ("pcmu", 8000) => fmts.push(Fmt { codec: CodecKind::Pcmu, pt }),
-            ("pcma", 8000) => fmts.push(Fmt { codec: CodecKind::Pcma, pt }),
-            ("g722", 8000) => fmts.push(Fmt { codec: CodecKind::G722, pt }),
-            ("opus", 48000) => fmts.push(Fmt { codec: CodecKind::Opus, pt }),
+            ("pcmu", 8000) => fmts.push(Fmt {
+                codec: CodecKind::Pcmu,
+                pt,
+            }),
+            ("pcma", 8000) => fmts.push(Fmt {
+                codec: CodecKind::Pcma,
+                pt,
+            }),
+            ("g722", 8000) => fmts.push(Fmt {
+                codec: CodecKind::G722,
+                pt,
+            }),
+            ("opus", 48000) => fmts.push(Fmt {
+                codec: CodecKind::Opus,
+                pt,
+            }),
             ("telephone-event", c) => te.push((pt, c)),
             _ => {}
         }
@@ -195,13 +216,21 @@ pub fn choose(remote: &Remote, ours: &[CodecKind], we_are_answerer: bool) -> Opt
         }
         None
     } else {
-        remote.fmts.iter().find(|f| ours.contains(&f.codec)).copied()
+        remote
+            .fmts
+            .iter()
+            .find(|f| ours.contains(&f.codec))
+            .copied()
     }
 }
 
 /// The telephone-event format whose clock matches the codec.
 pub fn choose_te(remote: &Remote, codec: CodecKind) -> Option<u8> {
-    remote.te.iter().find(|t| t.1 == codec.rtp_clock()).map(|t| t.0)
+    remote
+        .te
+        .iter()
+        .find(|t| t.1 == codec.rtp_clock())
+        .map(|t| t.0)
 }
 
 /// Our direction answering theirs, given whether we hold.
@@ -251,6 +280,9 @@ mod tests {
         let r = parse(s).unwrap();
         assert_eq!(r.direction, Direction::SendOnly);
         assert!(r.addr.is_none());
-        assert_eq!(answer_direction(Direction::SendOnly, false), Direction::RecvOnly);
+        assert_eq!(
+            answer_direction(Direction::SendOnly, false),
+            Direction::RecvOnly
+        );
     }
 }

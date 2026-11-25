@@ -89,7 +89,11 @@ fn host() -> cpal::Host {
 
 fn find_device(h: &cpal::Host, name: &str, input: bool) -> Option<cpal::Device> {
     if !name.is_empty() {
-        let devs = if input { h.input_devices().ok() } else { h.output_devices().ok() };
+        let devs = if input {
+            h.input_devices().ok()
+        } else {
+            h.output_devices().ok()
+        };
         if let Some(devs) = devs {
             for d in devs {
                 if d.to_string() == name {
@@ -111,17 +115,33 @@ pub fn list_devices() -> (Vec<String>, Vec<String>) {
     // One long-lived connection for listing: opening and dropping a PulseAudio client
     // each time makes the pulseaudio crate log a spurious "Client disconnected" error.
     static LIST_HOST: std::sync::OnceLock<Mutex<cpal::Host>> = std::sync::OnceLock::new();
-    let h = LIST_HOST.get_or_init(|| Mutex::new(host())).lock().unwrap_or_else(|e| e.into_inner());
-    let outs = h.output_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default();
-    let ins = h.input_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default();
+    let h = LIST_HOST
+        .get_or_init(|| Mutex::new(host()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let outs = h
+        .output_devices()
+        .map(|d| d.map(|d| d.to_string()).collect())
+        .unwrap_or_default();
+    let ins = h
+        .input_devices()
+        .map(|d| d.map(|d| d.to_string()).collect())
+        .unwrap_or_default();
     (outs, ins)
 }
 
 fn stream_cfg() -> cpal::StreamConfig {
-    cpal::StreamConfig { channels: 1, sample_rate: 48_000, buffer_size: cpal::BufferSize::Fixed(480) }
+    cpal::StreamConfig {
+        channels: 1,
+        sample_rate: 48_000,
+        buffer_size: cpal::BufferSize::Fixed(480),
+    }
 }
 
-fn open_output(dev: &cpal::Device, mut pull: impl FnMut(&mut [f32]) + Send + 'static) -> Result<cpal::Stream, String> {
+fn open_output(
+    dev: &cpal::Device,
+    mut pull: impl FnMut(&mut [f32]) + Send + 'static,
+) -> Result<cpal::Stream, String> {
     let mut cfg = stream_cfg();
     let pull = Arc::new(Mutex::new(move |o: &mut [f32]| pull(o)));
     for attempt in 0..2 {
@@ -204,7 +224,13 @@ impl AudioHub {
             tone: None,
             local: VecDeque::new(),
             ring: Ring::Off,
-            cfg: AudioConfig { speaker_volume: 100, mic_volume: 100, ring_volume: 100, echo_cancellation: true, ..Default::default() },
+            cfg: AudioConfig {
+                speaker_volume: 100,
+                mic_volume: 100,
+                ring_volume: 100,
+                echo_cancellation: true,
+                ..Default::default()
+            },
             cfg_version: 0,
             ringtone: Arc::new(dsp::default_ringtone()),
             mic_level: 0.0,
@@ -340,7 +366,11 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
         ring: None,
         spk_buf: Arc::new(Mutex::new(VecDeque::new())),
         mic_buf: Arc::new(Mutex::new(VecDeque::new())),
-        ring_state: Arc::new(Mutex::new(RingPlayer { samples: Arc::new(Vec::new()), pos: 0, gain: 1.0 })),
+        ring_state: Arc::new(Mutex::new(RingPlayer {
+            samples: Arc::new(Vec::new()),
+            pos: 0,
+            gain: 1.0,
+        })),
         idle_since: None,
         cfg_version: 0,
     };
@@ -362,7 +392,16 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
 
         let (streams, conference, mute, cfg, ring, ringtone, cfg_version, source) = {
             let g = st.lock().unwrap_or_else(|e| e.into_inner());
-            (g.streams.clone(), g.conference, g.mute, g.cfg.clone(), g.ring, g.ringtone.clone(), g.cfg_version, g.source.clone())
+            (
+                g.streams.clone(),
+                g.conference,
+                g.mute,
+                g.cfg.clone(),
+                g.ring,
+                g.ringtone.clone(),
+                g.cfg_version,
+                g.source.clone(),
+            )
         };
         if player.as_ref().map(|(s, _)| s) != source.as_ref() {
             player = source.map(|s| (s.clone(), super::source::SourcePlayer::new(s)));
@@ -407,16 +446,28 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
                     }
                 }) {
                     Ok(s) => dev.ring = Some(s),
-                    Err(e) => st.lock().unwrap_or_else(|e| e.into_inner()).errors.push(format!("Ring device: {e}")),
+                    Err(e) => st
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .errors
+                        .push(format!("Ring device: {e}")),
                 }
             }
         } else if !want_ring && dev.ring.is_some() {
             dev.ring = None;
         }
-        dev.ring_state.lock().unwrap_or_else(|e| e.into_inner()).gain = cfg.ring_volume as f32 / 100.0;
+        dev.ring_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .gain = cfg.ring_volume as f32 / 100.0;
 
-        let has_tone = st.lock().unwrap_or_else(|e| e.into_inner()).tone.is_some() || ring == Ring::Waiting;
-        let has_local = !st.lock().unwrap_or_else(|e| e.into_inner()).local.is_empty();
+        let has_tone =
+            st.lock().unwrap_or_else(|e| e.into_inner()).tone.is_some() || ring == Ring::Waiting;
+        let has_local = !st
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .local
+            .is_empty();
         let need = !streams.is_empty() || has_tone || has_local;
         let need_mic = !streams.is_empty() && player.is_none();
 
@@ -428,8 +479,14 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
                 dev.speaker = None;
                 dev.mic = None;
                 apm = None;
-                dev.spk_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
-                dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                dev.spk_buf
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clear();
+                dev.mic_buf
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clear();
             }
         }
         if !need && dev.speaker.is_none() {
@@ -447,7 +504,11 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
                     }
                 }) {
                     Ok(s) => dev.speaker = Some(s),
-                    Err(e) => st.lock().unwrap_or_else(|e| e.into_inner()).errors.push(format!("Speaker: {e}")),
+                    Err(e) => st
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .errors
+                        .push(format!("Speaker: {e}")),
                 }
             }
         }
@@ -456,15 +517,25 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
         if null_audio {
         } else if need_mic && dev.mic.is_none() {
             if let Some(d) = find_device(&h, &cfg.microphone, true) {
-                dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                dev.mic_buf
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clear();
                 match open_input(&d, dev.mic_buf.clone()) {
                     Ok(s) => dev.mic = Some(s),
-                    Err(e) => st.lock().unwrap_or_else(|e| e.into_inner()).errors.push(format!("Microphone: {e}")),
+                    Err(e) => st
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .errors
+                        .push(format!("Microphone: {e}")),
                 }
             }
         } else if !need_mic && dev.mic.is_some() {
             dev.mic = None;
-            dev.mic_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            dev.mic_buf
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
         }
 
         // 1. Received audio per call.
@@ -533,7 +604,10 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
             mic.fill(0);
         }
         if null_audio {
-            dev.spk_buf.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            dev.spk_buf
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
         }
         // Mic gain is for the microphone; a source keeps its calibrated level.
         let mv = cfg.mic_volume as f32 / 100.0;

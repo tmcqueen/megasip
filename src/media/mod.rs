@@ -350,7 +350,12 @@ impl Stream {
             st: Counters::new(),
             cfg,
         };
-        let s = Arc::new(Stream { id, sock, inner: Mutex::new(inner), rx_task: Mutex::new(None) });
+        let s = Arc::new(Stream {
+            id,
+            sock,
+            inner: Mutex::new(inner),
+            rx_task: Mutex::new(None),
+        });
         let weak = Arc::downgrade(&s);
         let task = tokio::spawn(async move {
             let mut buf = vec![0u8; 2048];
@@ -418,7 +423,11 @@ impl Stream {
         let g = self.lk();
         let c = &g.st;
         let lost = c.expected.saturating_sub(c.received);
-        let loss_pct = if c.expected > 0 { lost as f64 * 100.0 / c.expected as f64 } else { 0.0 };
+        let loss_pct = if c.expected > 0 {
+            lost as f64 * 100.0 / c.expected as f64
+        } else {
+            0.0
+        };
         let jitter_ms = c.jitter * 1000.0 / g.cfg.codec.rtp_clock() as f64;
         let buffer_ms = g.fifo.len() as f64 / 48.0;
         // One-way delay we can account for: packetisation + playout buffer + device
@@ -536,7 +545,10 @@ impl Stream {
         g.st.rx_bytes += data.len() as u64;
         g.last_rx = Some(Instant::now());
         if is_te {
-            let d = g.dtmf_rx.process_packet(pt, &pkt.payload).map(|d| d.as_char());
+            let d = g
+                .dtmf_rx
+                .process_packet(pt, &pkt.payload)
+                .map(|d| d.as_char());
             if d.is_some() && d != g.last_dtmf {
                 g.last_dtmf = d;
                 g.st.dtmf_rx += 1;
@@ -701,7 +713,8 @@ impl Stream {
         let mut packets: Vec<Vec<u8>> = Vec::new();
         if let (Some(te), Some(mut d)) = (g.cfg.te_pt, g.dtmf.take()) {
             d.elapsed = (d.elapsed + tpf).min(d.total);
-            let mut ev = DtmfEvent::new(d.digit, d.elapsed.min(u16::MAX as u32) as u16).with_volume(10);
+            let mut ev =
+                DtmfEvent::new(d.digit, d.elapsed.min(u16::MAX as u32) as u16).with_volume(10);
             let ending = d.elapsed >= d.total;
             if ending {
                 ev = ev.with_end();
@@ -732,7 +745,9 @@ impl Stream {
             let payload = g.encoder.encode(&low);
             if !payload.is_empty() {
                 let m = g.marker;
-                let pkt = RtpPacket::new(g.cfg.pt, g.seq, g.ts, g.ssrc).with_marker(m).with_payload(payload);
+                let pkt = RtpPacket::new(g.cfg.pt, g.seq, g.ts, g.ssrc)
+                    .with_marker(m)
+                    .with_payload(payload);
                 g.marker = false;
                 g.seq = g.seq.wrapping_add(1);
                 packets.push(pkt.build().to_vec());
@@ -766,7 +781,11 @@ fn push_fifo(g: &mut Inner, pcm: &[i16]) {
 
 /// Simplified E-model (ITU-T G.107): R factor and MOS from one-way delay and loss.
 pub fn estimate_mos(codec: CodecKind, delay_ms: f64, loss_pct: f64) -> (f64, f64) {
-    let id = if delay_ms < 177.3 { 0.024 * delay_ms } else { 0.024 * delay_ms + 0.11 * (delay_ms - 177.3) };
+    let id = if delay_ms < 177.3 {
+        0.024 * delay_ms
+    } else {
+        0.024 * delay_ms + 0.11 * (delay_ms - 177.3)
+    };
     // Packet-loss robustness (Bpl) with our concealment; equipment impairment Ie ~ 0
     // for these codecs on the narrowband scale.
     let (ie, bpl) = match codec {
@@ -776,7 +795,11 @@ pub fn estimate_mos(codec: CodecKind, delay_ms: f64, loss_pct: f64) -> (f64, f64
     };
     let ie_eff = ie + (95.0 - ie) * loss_pct / (loss_pct + bpl);
     let r = (93.2 - id - ie_eff).clamp(0.0, 100.0);
-    let mos = if r <= 0.0 { 1.0 } else { (1.0 + 0.035 * r + 7e-6 * r * (r - 60.0) * (100.0 - r)).clamp(1.0, 4.5) };
+    let mos = if r <= 0.0 {
+        1.0
+    } else {
+        (1.0 + 0.035 * r + 7e-6 * r * (r - 60.0) * (100.0 - r)).clamp(1.0, 4.5)
+    };
     (r, mos)
 }
 

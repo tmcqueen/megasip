@@ -30,13 +30,17 @@ pub fn run(settings: Settings, account_id: String, db: rusqlite::Connection) {
                 }
                 Event::Ended { info, missed } => {
                     if info.account_id == account_id {
-                        if let Err(e) = crate::db::add_history(&db, &crate::store::history_entry(&info, missed)) {
+                        if let Err(e) =
+                            crate::db::add_history(&db, &crate::store::history_entry(&info, missed))
+                        {
                             tracing::warn!("couldn't save call history: {e}");
                         }
                     }
                     serde_json::json!({"event": "ended", "call": info, "missed": missed})
                 }
-                Event::Dtmf(id, d) => serde_json::json!({"event": "dtmf", "id": id, "digit": d.to_string()}),
+                Event::Dtmf(id, d) => {
+                    serde_json::json!({"event": "dtmf", "id": id, "digit": d.to_string()})
+                }
                 Event::Error(e) => serde_json::json!({"event": "error", "text": e}),
             };
             println!("{v}");
@@ -45,10 +49,17 @@ pub fn run(settings: Settings, account_id: String, db: rusqlite::Connection) {
     let stdin = std::io::stdin();
     for line in stdin.lock().lines().map_while(Result::ok) {
         let p: Vec<&str> = line.split_whitespace().collect();
-        let id = |i: usize| -> u64 { p.get(i).and_then(|v| v.parse().ok()).unwrap_or(*last_incoming.lock().unwrap()) };
+        let id = |i: usize| -> u64 {
+            p.get(i)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(*last_incoming.lock().unwrap())
+        };
         let on = |i: usize| p.get(i).is_some_and(|v| *v == "on" || *v == "1");
         let c = match p.first().copied() {
-            Some("dial") => Command::Dial { number: p.get(1).unwrap_or(&"").to_string(), account: p.get(2).unwrap_or(&"").to_string() },
+            Some("dial") => Command::Dial {
+                number: p.get(1).unwrap_or(&"").to_string(),
+                account: p.get(2).unwrap_or(&"").to_string(),
+            },
             Some("answer") => Command::Answer(id(1)),
             Some("reject") => Command::Reject(id(1)),
             Some("hangup") => Command::Hangup(id(1)),
@@ -62,16 +73,23 @@ pub fn run(settings: Settings, account_id: String, db: rusqlite::Connection) {
                 continue;
             }
             Some("transfer") => Command::Transfer(id(1), p.get(2).unwrap_or(&"").to_string()),
-            Some("xfer") => Command::AttendedTransfer(id(1), p.get(2).and_then(|v| v.parse().ok()).unwrap_or(0)),
+            Some("xfer") => {
+                Command::AttendedTransfer(id(1), p.get(2).and_then(|v| v.parse().ok()).unwrap_or(0))
+            }
             Some("conf") => Command::Conference(on(1)),
             Some("mute") => Command::Mute(on(1)),
             Some("levels") => {
                 let (m, s) = hub.levels();
-                println!("{}", serde_json::json!({"event": "levels", "mic": m, "speaker": s, "freq": hub.speaker_freq()}));
+                println!(
+                    "{}",
+                    serde_json::json!({"event": "levels", "mic": m, "speaker": s, "freq": hub.speaker_freq()})
+                );
                 continue;
             }
             Some("sleep") => {
-                std::thread::sleep(std::time::Duration::from_millis(p.get(1).and_then(|v| v.parse().ok()).unwrap_or(1000)));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    p.get(1).and_then(|v| v.parse().ok()).unwrap_or(1000),
+                ));
                 continue;
             }
             Some("quit") => break,

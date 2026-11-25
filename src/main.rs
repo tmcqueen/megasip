@@ -9,8 +9,8 @@ mod debug;
 mod engine;
 mod ipc;
 mod logging;
-mod secrets;
 mod media;
+mod secrets;
 mod store;
 
 use std::sync::OnceLock;
@@ -55,7 +55,11 @@ fn main() {
     let mut request: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        let mut value = |flag: &str| it.next().cloned().unwrap_or_else(|| fail(&format!("{flag} needs a value")));
+        let mut value = |flag: &str| {
+            it.next()
+                .cloned()
+                .unwrap_or_else(|| fail(&format!("{flag} needs a value")))
+        };
         match a.as_str() {
             "-h" | "--help" => {
                 println!("{HELP}");
@@ -89,7 +93,10 @@ fn main() {
     if cli_mode {
         logging::init(&settings);
         let name = account.unwrap_or_else(|| fail("--cli needs -a <account>"));
-        let acc = settings.find_account(&name).cloned().unwrap_or_else(|| fail(&format!("no account named \"{name}\"")));
+        let acc = settings
+            .find_account(&name)
+            .cloned()
+            .unwrap_or_else(|| fail(&format!("no account named \"{name}\"")));
         let mut c = db.unwrap_or_else(|e| fail(&format!("can't open the database: {e}")));
         match db::acquire(&mut c, &acc.id) {
             Ok(Ok(())) => {}
@@ -104,13 +111,20 @@ fn main() {
     // Hand the request to running windows where that's what it means.
     let me = std::process::id();
     let live: Vec<db::Instance> = match &db {
-        Ok(c) => db::live(c).unwrap_or_default().into_iter().filter(|i| i.pid != me).collect(),
+        Ok(c) => db::live(c)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| i.pid != me)
+            .collect(),
         Err(e) => {
             eprintln!("megasip: can't open the database ({e}); starting without the other windows");
             Vec::new()
         }
     };
-    let dial = request.as_deref().and_then(|r| r.strip_prefix("dial ")).map(str::to_string);
+    let dial = request
+        .as_deref()
+        .and_then(|r| r.strip_prefix("dial "))
+        .map(str::to_string);
     if matches!(request.as_deref(), Some("answer" | "hangup" | "quit")) {
         for i in &live {
             ipc::send_to(i.pid, request.as_deref().unwrap_or_default());
@@ -123,9 +137,16 @@ fn main() {
                 let _ = START_ERROR.set(format!("No account named \"{name}\""));
             }
             Some(acc) => {
-                if let Some(holder) = live.iter().find(|i| i.account_id.as_deref() == Some(acc.id.as_str())) {
+                if let Some(holder) = live
+                    .iter()
+                    .find(|i| i.account_id.as_deref() == Some(acc.id.as_str()))
+                {
                     if source.is_some() {
-                        fail(&format!("{} is already active (pid {})", acc.title(), holder.pid));
+                        fail(&format!(
+                            "{} is already active (pid {})",
+                            acc.title(),
+                            holder.pid
+                        ));
                     }
                     ipc::send_to(holder.pid, "show");
                     if let Some(d) = &dial {
@@ -169,7 +190,8 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_secs(3));
         std::process::exit(0);
     });
-    let code = appcpp::ffi::run_qt_app("org.megasip.MegaSIP", minimized || settings.start_minimized);
+    let code =
+        appcpp::ffi::run_qt_app("org.megasip.MegaSIP", minimized || settings.start_minimized);
     ipc::cleanup();
     std::process::exit(code);
 }

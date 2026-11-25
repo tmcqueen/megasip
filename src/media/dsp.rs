@@ -26,7 +26,11 @@ impl Resampler {
         let mut taps: Vec<f32> = (0..n)
             .map(|i| {
                 let x = i as f32 - mid;
-                let sinc = if x.abs() < 1e-6 { 2.0 * cutoff } else { (2.0 * PI * cutoff * x).sin() / (PI * x) };
+                let sinc = if x.abs() < 1e-6 {
+                    2.0 * cutoff
+                } else {
+                    (2.0 * PI * cutoff * x).sin() / (PI * x)
+                };
                 let w = 0.42 - 0.5 * (2.0 * PI * i as f32 / (n as f32 - 1.0).max(1.0)).cos()
                     + 0.08 * (4.0 * PI * i as f32 / (n as f32 - 1.0).max(1.0)).cos();
                 sinc * if n == 1 { 1.0 } else { w }
@@ -38,7 +42,13 @@ impl Resampler {
         }
         let phase_len = n.div_ceil(up);
         let hist_len = if up > 1 { phase_len } else { n };
-        Resampler { up, down, taps, hist: vec![0.0; hist_len], phase_len }
+        Resampler {
+            up,
+            down,
+            taps,
+            hist: vec![0.0; hist_len],
+            phase_len,
+        }
     }
 
     pub fn is_passthrough(&self) -> bool {
@@ -237,12 +247,20 @@ fn decode_mp3(path: &str, max_secs: u32) -> Option<(u32, Vec<i16>)> {
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     let mut format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .ok()?;
     let track = format.default_track(TrackType::Audio)?;
     let track_id = track.id;
     let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(track.codec_params.as_ref()?.audio()?, &AudioDecoderOptions::default())
+        .make_audio_decoder(
+            track.codec_params.as_ref()?.audio()?,
+            &AudioDecoderOptions::default(),
+        )
         .ok()?;
     let mut rate = 0u32;
     let mut mono: Vec<i16> = Vec::new();
@@ -251,7 +269,9 @@ fn decode_mp3(path: &str, max_secs: u32) -> Option<(u32, Vec<i16>)> {
         if packet.track_id != track_id {
             continue;
         }
-        let Ok(audio) = decoder.decode(&packet) else { continue };
+        let Ok(audio) = decoder.decode(&packet) else {
+            continue;
+        };
         let spec = audio.spec();
         rate = spec.rate();
         let ch = spec.channels().count().max(1);
@@ -345,7 +365,10 @@ pub fn default_ringtone() -> Vec<i16> {
         for i in 0..(48_000 * 4 / 10) {
             let t = i as f32 / 48_000.0;
             let am = if (i / 1200) % 2 == 0 { 1.0 } else { 0.4 };
-            out.push((((2.0 * PI * 440.0 * t).sin() + (2.0 * PI * 480.0 * t).sin()) * 5000.0 * am) as i16);
+            out.push(
+                (((2.0 * PI * 440.0 * t).sin() + (2.0 * PI * 480.0 * t).sin()) * 5000.0 * am)
+                    as i16,
+            );
         }
         if burst == 0 {
             out.extend(std::iter::repeat_n(0i16, 48_000 / 5));
@@ -388,16 +411,27 @@ mod tests {
         for p in [wav.to_str().unwrap(), mp3] {
             let (s, cut) = load_sound_max(p, 600).unwrap_or_else(|| panic!("{p} didn't load"));
             assert!(!cut);
-            assert!((45_600..=50_400).contains(&s.len()), "{p}: {} samples", s.len());
-            assert!(s.iter().map(|v| v.saturating_abs()).max().unwrap() > 1000, "{p} is silent");
+            assert!(
+                (45_600..=50_400).contains(&s.len()),
+                "{p}: {} samples",
+                s.len()
+            );
+            assert!(
+                s.iter().map(|v| v.saturating_abs()).max().unwrap() > 1000,
+                "{p} is silent"
+            );
         }
-        let (s, cut) = load_sound_max(mp3, 0).map(|(s, c)| (s.len(), c)).unwrap_or((0, true));
+        let (s, cut) = load_sound_max(mp3, 0)
+            .map(|(s, c)| (s.len(), c))
+            .unwrap_or((0, true));
         assert!(cut || s == 0);
         let _ = std::fs::remove_dir_all(dir);
     }
 
     fn tone(rate: u32, f: f32, n: usize) -> Vec<i16> {
-        (0..n).map(|i| ((2.0 * PI * f * i as f32 / rate as f32).sin() * 10000.0) as i16).collect()
+        (0..n)
+            .map(|i| ((2.0 * PI * f * i as f32 / rate as f32).sin() * 10000.0) as i16)
+            .collect()
     }
 
     fn rms(v: &[i16]) -> f32 {

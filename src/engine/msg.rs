@@ -83,7 +83,10 @@ pub fn split_list(v: &str) -> Vec<String> {
 impl SipMsg {
     pub fn request(method: &str, uri: &str) -> Self {
         SipMsg {
-            start: StartLine::Request { method: method.to_string(), uri: uri.to_string() },
+            start: StartLine::Request {
+                method: method.to_string(),
+                uri: uri.to_string(),
+            },
             headers: Vec::new(),
             body: Vec::new(),
         }
@@ -91,7 +94,10 @@ impl SipMsg {
 
     pub fn response(code: u16, reason: &str) -> Self {
         SipMsg {
-            start: StartLine::Response { code, reason: reason.to_string() },
+            start: StartLine::Response {
+                code,
+                reason: reason.to_string(),
+            },
             headers: Vec::new(),
             body: Vec::new(),
         }
@@ -117,7 +123,10 @@ impl SipMsg {
         let first = lines.first()?.trim().to_string();
         let start = if let Some(rest) = first.strip_prefix("SIP/2.0 ") {
             let (code, reason) = rest.split_once(' ').unwrap_or((rest, ""));
-            StartLine::Response { code: code.trim().parse().ok()?, reason: reason.to_string() }
+            StartLine::Response {
+                code: code.trim().parse().ok()?,
+                reason: reason.to_string(),
+            }
         } else {
             let mut it = first.split_whitespace();
             let method = it.next()?.to_string();
@@ -129,7 +138,9 @@ impl SipMsg {
         };
         let mut headers = Vec::new();
         for l in &lines[1..] {
-            let Some((n, v)) = l.split_once(':') else { continue };
+            let Some((n, v)) = l.split_once(':') else {
+                continue;
+            };
             let name = canonical(n);
             let value = v.trim();
             if is_list_header(&name) && !value.starts_with('*') {
@@ -140,7 +151,11 @@ impl SipMsg {
                 headers.push((name, value.to_string()));
             }
         }
-        let mut msg = SipMsg { start, headers, body: Vec::new() };
+        let mut msg = SipMsg {
+            start,
+            headers,
+            body: Vec::new(),
+        };
         let body = &data[split.1..];
         let len = msg
             .header("Content-Length")
@@ -270,7 +285,13 @@ impl SipMsg {
 
     pub fn content_type(&self) -> String {
         self.header("Content-Type")
-            .map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+            .map(|v| {
+                v.split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase()
+            })
             .unwrap_or_default()
     }
 
@@ -363,11 +384,17 @@ pub fn parse_name_addr(v: &str) -> NameAddr {
     if let (Some(l), Some(r)) = (v.find('<'), v.rfind('>')) {
         if l < r {
             let display = v[..l].trim().trim_matches('"').replace("\\\"", "\"");
-            return NameAddr { display, uri: v[l + 1..r].trim().to_string() };
+            return NameAddr {
+                display,
+                uri: v[l + 1..r].trim().to_string(),
+            };
         }
     }
     let uri = v.split(';').next().unwrap_or("").trim().to_string();
-    NameAddr { display: String::new(), uri }
+    NameAddr {
+        display: String::new(),
+        uri,
+    }
 }
 
 /// The user part of a SIP URI (`sip:1001@host` -> `1001`), or the whole thing for tel:.
@@ -422,9 +449,18 @@ pub fn uri_escape(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')' => {
-                out.push(b as char)
-            }
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => out.push(b as char),
             _ => {
                 let _ = write!(out, "%{b:02X}");
             }
@@ -462,7 +498,9 @@ pub fn random_token(n: usize) -> String {
     use rand::Rng;
     const CH: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut r = rand::thread_rng();
-    (0..n).map(|_| CH[r.gen_range(0..CH.len())] as char).collect()
+    (0..n)
+        .map(|_| CH[r.gen_range(0..CH.len())] as char)
+        .collect()
 }
 
 pub fn new_branch() -> String {
@@ -495,11 +533,27 @@ mod tests {
 
     #[test]
     fn params_and_uris() {
-        assert_eq!(param("SIP/2.0/UDP h:5060;branch=z9;received=1.2.3.4;rport=999", "rport").as_deref(), Some("999"));
-        assert_eq!(param("<sip:a@b;transport=tcp>;expires=60", "expires").as_deref(), Some("60"));
+        assert_eq!(
+            param(
+                "SIP/2.0/UDP h:5060;branch=z9;received=1.2.3.4;rport=999",
+                "rport"
+            )
+            .as_deref(),
+            Some("999")
+        );
+        assert_eq!(
+            param("<sip:a@b;transport=tcp>;expires=60", "expires").as_deref(),
+            Some("60")
+        );
         assert_eq!(param("<sip:a@b;transport=tcp>", "transport"), None);
-        assert_eq!(uri_param("<sip:a@b;transport=tcp>", "transport").as_deref(), Some("tcp"));
-        assert_eq!(uri_hostport("sip:1001@pbx.example.com:5080;transport=udp"), "pbx.example.com:5080");
+        assert_eq!(
+            uri_param("<sip:a@b;transport=tcp>", "transport").as_deref(),
+            Some("tcp")
+        );
+        assert_eq!(
+            uri_hostport("sip:1001@pbx.example.com:5080;transport=udp"),
+            "pbx.example.com:5080"
+        );
         assert_eq!(uri_user("tel:+15551234"), "+15551234");
         assert_eq!(uri_unescape(&uri_escape("a;to-tag=1")), "a;to-tag=1");
         assert!(frame_len(b"OPTIONS sip:a SIP/2.0\r\nContent-Length: 2\r\n\r\nab").is_some());

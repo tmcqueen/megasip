@@ -48,7 +48,11 @@ pub enum Flow {
 
 #[derive(Debug)]
 pub enum TransportEvent {
-    Message { data: Vec<u8>, from: SocketAddr, flow: Flow },
+    Message {
+        data: Vec<u8>,
+        from: SocketAddr,
+        flow: Flow,
+    },
     Closed(u64),
 }
 
@@ -106,7 +110,11 @@ impl Transports {
                             continue; // keep-alive
                         }
                         if ev
-                            .send(TransportEvent::Message { data: buf[..n].to_vec(), from, flow: Flow::Udp })
+                            .send(TransportEvent::Message {
+                                data: buf[..n].to_vec(),
+                                from,
+                                flow: Flow::Udp,
+                            })
                             .is_err()
                         {
                             break;
@@ -119,11 +127,24 @@ impl Transports {
                 }
             }
         });
-        Ok(Transports { udp, udp_local, streams: HashMap::new(), next_id: 1, events, tls: tls_config() })
+        Ok(Transports {
+            udp,
+            udp_local,
+            streams: HashMap::new(),
+            next_id: 1,
+            events,
+            tls: tls_config(),
+        })
     }
 
     /// Take over a connected stream (from [`dial`]) and start reading SIP from it.
-    pub fn attach(&mut self, stream: BoxStream, peer: SocketAddr, local: SocketAddr, proto: Proto) -> u64 {
+    pub fn attach(
+        &mut self,
+        stream: BoxStream,
+        peer: SocketAddr,
+        local: SocketAddr,
+        proto: Proto,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -152,7 +173,11 @@ impl Transports {
     pub fn flow_name(&self, flow: Flow) -> &'static str {
         match flow {
             Flow::Udp => "UDP",
-            Flow::Stream(id) => self.streams.get(&id).map(|s| s.proto.via_name()).unwrap_or("TCP"),
+            Flow::Stream(id) => self
+                .streams
+                .get(&id)
+                .map(|s| s.proto.via_name())
+                .unwrap_or("TCP"),
         }
     }
 
@@ -162,7 +187,11 @@ impl Transports {
             crate::debug::sip("out", self.flow_name(flow), dest, data);
         }
         if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!("SEND {:?} -> {dest}\n{}", flow, String::from_utf8_lossy(data));
+            tracing::debug!(
+                "SEND {:?} -> {dest}\n{}",
+                flow,
+                String::from_utf8_lossy(data)
+            );
         }
         match flow {
             Flow::Udp => {
@@ -208,7 +237,9 @@ pub async fn dial(
     let conn = tokio_rustls::TlsConnector::from(tls);
     let stream = tokio::time::timeout(std::time::Duration::from_secs(10), conn.connect(name, tcp))
         .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake timed out"))??;
+        .map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake timed out")
+        })??;
     Ok((Box::new(stream), local))
 }
 
@@ -239,7 +270,14 @@ async fn run_stream<S>(
         }
         if let Some(n) = frame_len(&buf) {
             let msg: Vec<u8> = buf.drain(..n).collect();
-            if ev.send(TransportEvent::Message { data: msg, from: peer, flow: Flow::Stream(id) }).is_err() {
+            if ev
+                .send(TransportEvent::Message {
+                    data: msg,
+                    from: peer,
+                    flow: Flow::Stream(id),
+                })
+                .is_err()
+            {
                 break;
             }
             continue;
@@ -258,25 +296,40 @@ async fn run_stream<S>(
 
 /// The local IP the OS would use to reach `dest` (no packets are sent).
 pub fn local_ip_for(dest: SocketAddr) -> Option<std::net::IpAddr> {
-    let s = std::net::UdpSocket::bind(if dest.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }).ok()?;
+    let s = std::net::UdpSocket::bind(if dest.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })
+    .ok()?;
     s.connect(dest).ok()?;
     s.local_addr().ok().map(|a| a.ip())
 }
 
 /// Resolve a SIP server ("host", "host:port", or IP) to a socket address and transport.
 /// Uses RFC 3263 SRV lookups (via rsiprtp's resolver) when no port is given.
-pub async fn resolve(host_port: &str, proto: Option<Proto>, use_srv: bool) -> Option<(SocketAddr, Proto)> {
+pub async fn resolve(
+    host_port: &str,
+    proto: Option<Proto>,
+    use_srv: bool,
+) -> Option<(SocketAddr, Proto)> {
     let hp = host_port.trim();
     let (host, port) = split_host_port(hp);
     let proto_or = proto.unwrap_or(Proto::Udp);
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return Some((SocketAddr::new(ip, port.unwrap_or(proto_or.default_port())), proto_or));
+        return Some((
+            SocketAddr::new(ip, port.unwrap_or(proto_or.default_port())),
+            proto_or,
+        ));
     }
     if port.is_none() && use_srv {
         // hickory's futures are not Send; resolve on a small private runtime.
         let host_s = host.to_string();
         let found = tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()?;
             rt.block_on(async move {
                 let res = rsiprtp::transport::SipResolver::new().await.ok()?;
                 let want = proto.map(|p| match p {
@@ -284,10 +337,13 @@ pub async fn resolve(host_port: &str, proto: Option<Proto>, use_srv: bool) -> Op
                     Proto::Tcp => rsiprtp::transport::TransportProtocol::Tcp,
                     Proto::Tls => rsiprtp::transport::TransportProtocol::Tls,
                 });
-                let targets = tokio::time::timeout(std::time::Duration::from_secs(6), res.resolve(&host_s, want))
-                    .await
-                    .ok()?
-                    .ok()?;
+                let targets = tokio::time::timeout(
+                    std::time::Duration::from_secs(6),
+                    res.resolve(&host_s, want),
+                )
+                .await
+                .ok()?
+                .ok()?;
                 for t in targets {
                     let p = match t.transport {
                         rsiprtp::transport::TransportProtocol::Tcp => Proto::Tcp,
@@ -316,7 +372,10 @@ pub async fn resolve(host_port: &str, proto: Option<Proto>, use_srv: bool) -> Op
     let port = port.unwrap_or(proto_or.default_port());
     let addrs = tokio::net::lookup_host((host, port)).await.ok()?;
     let v: Vec<SocketAddr> = addrs.collect();
-    v.iter().find(|a| a.is_ipv4()).or(v.first()).map(|a| (*a, proto_or))
+    v.iter()
+        .find(|a| a.is_ipv4())
+        .or(v.first())
+        .map(|a| (*a, proto_or))
 }
 
 pub fn split_host_port(hp: &str) -> (&str, Option<u16>) {

@@ -80,7 +80,8 @@ pub fn binding_blocking(sock: &std::net::UdpSocket, server: SocketAddr) -> Optio
     let req = request(&txid);
     let was_nb = true;
     sock.set_nonblocking(false).ok()?;
-    sock.set_read_timeout(Some(std::time::Duration::from_millis(250))).ok()?;
+    sock.set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .ok()?;
     let mut buf = [0u8; 512];
     let mut out = None;
     for _ in 0..2 {
@@ -108,6 +109,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::identity_op)] // `0 ^ 0x12` spells out the XOR with the magic cookie
     fn parses_xor_mapped() {
         let txid = [1u8; 12];
         let mut r = vec![0x01, 0x01, 0, 12];

@@ -406,6 +406,13 @@ impl Stream {
         self.lk().cfg.clone()
     }
 
+    /// Start the quality counters over (Debug window → Clear).
+    pub fn reset_stats(&self) {
+        let mut g = self.lk();
+        g.st = Counters::new();
+        g.rx_packets = 0;
+    }
+
     pub fn stats(&self) -> StreamStats {
         let g = self.lk();
         let c = &g.st;

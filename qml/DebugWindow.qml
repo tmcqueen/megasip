@@ -52,6 +52,21 @@ QQC2.ApplicationWindow {
         return Kirigami.Theme.negativeTextColor
     }
 
+    signal cleared()
+    onCleared: callLadder.reset()
+
+    // Clear everything the window shows: messages, logs, the ladder, and call quality
+    // (live calls' counters start over from now).
+    function clearAll() {
+        phone.debugClear()
+        sipModel.clear(); logModel.clear(); dialogModel.clear()
+        dialogIndex = {}
+        history = {}
+        historyVersion++
+        cleared()
+        pollQuality()
+    }
+
     function poll() {
         if (paused) return
         const sip = JSON.parse(phone.debugSip(lastSip))
@@ -138,11 +153,7 @@ QQC2.ApplicationWindow {
             QQC2.ToolButton {
                 icon.name: "edit-clear-history"
                 text: "Clear"
-                onClicked: {
-                    dbg.phone.debugClear()
-                    sipModel.clear(); logModel.clear(); dialogModel.clear()
-                    dbg.dialogIndex = {}
-                }
+                onClicked: dbg.clearAll()
             }
         }
     }
@@ -277,6 +288,7 @@ QQC2.ApplicationWindow {
                             Connections {
                                 target: dbg
                                 function onShowMessage(text) { sipDetail.text = text; dbg.tab = 0 }
+                                function onCleared() { sipDetail.text = ""; sipList.currentIndex = -1 }
                             }
                         }
                     }
@@ -286,6 +298,7 @@ QQC2.ApplicationWindow {
 
         // ============================================================== Call ladder
         CallLadder {
+            id: callLadder
             dialogs: dialogModel
             messages: sipModel
             fmtTime: dbg.fmtTime

@@ -50,7 +50,7 @@ int32_t run_qt_app(rust::Str app_id, bool start_hidden)
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         if (win) {
             win->show();
-            const int steps = 14;
+            const int steps = 17;
             for (int step = 0; step < steps; ++step) {
                 QTimer::singleShot(2500 + step * 1200, win, [win, step]() { win->setProperty("shotStep", step); });
                 QTimer::singleShot(3200 + step * 1200, win, [step, shot]() {

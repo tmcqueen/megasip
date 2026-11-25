@@ -257,6 +257,18 @@ impl AudioHub {
         g.streams.retain(|x| x.id != id);
     }
 
+    /// Forget the last call's figures and start live calls' counters over.
+    pub fn clear_stats(&self) {
+        let streams = {
+            let mut g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+            g.last_stats = None;
+            g.streams.clone()
+        };
+        for s in streams {
+            s.reset_stats();
+        }
+    }
+
     /// Live stats for every call with media, plus the last call that ended.
     pub fn stats(&self) -> (Vec<super::StreamStats>, Option<super::StreamStats>) {
         let (streams, last) = {

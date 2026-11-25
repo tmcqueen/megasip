@@ -12,7 +12,10 @@ const MAX_FILE_SECS: u32 = 600;
 
 #[derive(Clone, Debug)]
 pub enum Source {
-    File { path: String, samples: Arc<Vec<i16>> },
+    File {
+        path: String,
+        samples: Arc<Vec<i16>>,
+    },
     Tone(f32),
     Pink,
     White,
@@ -45,8 +48,13 @@ impl Source {
             };
         }
         let lower = arg.to_ascii_lowercase();
-        if ![".wav", ".ogg", ".oga", ".mp3"].iter().any(|e| lower.ends_with(e)) {
-            return Err(format!("can't play {arg}: use a .wav, .ogg or .mp3 file, or milli, pink, white, tone:<hz>"));
+        if ![".wav", ".ogg", ".oga", ".mp3"]
+            .iter()
+            .any(|e| lower.ends_with(e))
+        {
+            return Err(format!(
+                "can't play {arg}: use a .wav, .ogg or .mp3 file, or milli, pink, white, tone:<hz>"
+            ));
         }
         if !std::path::Path::new(arg).is_file() {
             return Err(format!("can't play {arg}: no such file"));
@@ -56,19 +64,27 @@ impl Source {
                 if cut {
                     eprintln!("megasip: {arg} is longer than 10 minutes; playing the first 10");
                 }
-                let path = std::fs::canonicalize(arg).map(|p| p.display().to_string()).unwrap_or_else(|_| arg.to_string());
-                Ok(Source::File { path, samples: Arc::new(samples) })
+                let path = std::fs::canonicalize(arg)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| arg.to_string());
+                Ok(Source::File {
+                    path,
+                    samples: Arc::new(samples),
+                })
             }
-            None => Err(format!("can't play {arg}: not a PCM WAV, Ogg Vorbis or MP3 file MegaSIP can decode")),
+            None => Err(format!(
+                "can't play {arg}: not a PCM WAV, Ogg Vorbis or MP3 file MegaSIP can decode"
+            )),
         }
     }
 
     /// For the UI: "bar.wav", "1004 Hz tone", "Pink noise"…
     pub fn label(&self) -> String {
         match self {
-            Source::File { path, .. } => {
-                std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone())
-            }
+            Source::File { path, .. } => std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone()),
             Source::Tone(f) => format!("{} Hz tone", fmt_hz(*f)),
             Source::Pink => "Pink noise".into(),
             Source::White => "White noise".into(),
@@ -87,7 +103,11 @@ impl Source {
 }
 
 fn fmt_hz(f: f32) -> String {
-    if f.fract() == 0.0 { format!("{f:.0}") } else { format!("{f}") }
+    if f.fract() == 0.0 {
+        format!("{f:.0}")
+    } else {
+        format!("{f}")
+    }
 }
 
 /// Produces 20 ms frames from a `Source`.
@@ -100,7 +120,12 @@ pub struct SourcePlayer {
 
 impl SourcePlayer {
     pub fn new(src: Source) -> Self {
-        SourcePlayer { src, pos: 0, rng: 0x9E37_79B9_7F4A_7C15, pink: [0.0; 7] }
+        SourcePlayer {
+            src,
+            pos: 0,
+            rng: 0x9E37_79B9_7F4A_7C15,
+            pink: [0.0; 7],
+        }
     }
 
     /// Start from the beginning (a new call).
@@ -200,7 +225,10 @@ mod tests {
     #[test]
     fn levels() {
         let (_, peak) = rms_dbfs(Source::Tone(1004.0), 1);
-        assert!((peak as f32 - MILLI_PEAK).abs() <= 50.0, "milli peak {peak}");
+        assert!(
+            (peak as f32 - MILLI_PEAK).abs() <= 50.0,
+            "milli peak {peak}"
+        );
         let (white, _) = rms_dbfs(Source::White, 10);
         assert!((white + 20.0).abs() < 1.0, "white {white} dBFS");
         let (pink, _) = rms_dbfs(Source::Pink, 10);
@@ -210,7 +238,10 @@ mod tests {
     #[test]
     fn file_loops() {
         let samples: Vec<i16> = (0..100).collect();
-        let mut p = SourcePlayer::new(Source::File { path: "x.wav".into(), samples: Arc::new(samples) });
+        let mut p = SourcePlayer::new(Source::File {
+            path: "x.wav".into(),
+            samples: Arc::new(samples),
+        });
         let mut f = [0i16; FRAME];
         p.next_frame(&mut f);
         assert_eq!(&f[..3], &[0, 1, 2]);

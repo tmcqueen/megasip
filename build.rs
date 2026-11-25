@@ -24,7 +24,10 @@ fn main() {
         builder.cc_builder(|cc| {
             cc.include("cpp");
             // System headers: their warnings (e.g. KI18n's -Wattributes) aren't ours.
-            for dir in ["/usr/include/KF6/KI18n", "/usr/include/x86_64-linux-gnu/qt6/QtQmlIntegration"] {
+            for dir in [
+                "/usr/include/KF6/KI18n",
+                "/usr/include/x86_64-linux-gnu/qt6/QtQmlIntegration",
+            ] {
                 cc.flag("-isystem");
                 cc.flag(dir);
             }
@@ -35,7 +38,16 @@ fn main() {
     // Quick/QuickControls2 before it, and GNU ld with --as-needed (the Debian/Ubuntu
     // default) drops a library that nothing *earlier* on the line needs, which leaves
     // QApplication, QQuickStyle and QQuickWindow undefined.
-    for lib in ["Qt6Widgets", "Qt6QuickControls2", "Qt6Quick", "Qt6Gui", "Qt6Qml", "Qt6Core", "KF6I18n", "KF6I18nQml"] {
+    for lib in [
+        "Qt6Widgets",
+        "Qt6QuickControls2",
+        "Qt6Quick",
+        "Qt6Gui",
+        "Qt6Qml",
+        "Qt6Core",
+        "KF6I18n",
+        "KF6I18nQml",
+    ] {
         println!("cargo::rustc-link-lib=dylib={lib}");
     }
 }

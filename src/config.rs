@@ -200,14 +200,18 @@ pub fn config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("MEGASIP_CONFIG_DIR") {
         return PathBuf::from(d);
     }
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("megasip")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("megasip")
 }
 
 pub fn data_dir() -> PathBuf {
     if let Ok(d) = std::env::var("MEGASIP_DATA_DIR") {
         return PathBuf::from(d);
     }
-    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("megasip")
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("megasip")
 }
 
 impl Settings {
@@ -233,7 +237,11 @@ impl Settings {
     /// The enabled account a command line names: by short name (any case), else id.
     pub fn find_account(&self, name: &str) -> Option<&Account> {
         let name = name.trim();
-        let usable = || self.accounts.iter().filter(|a| a.enabled && !a.server.trim().is_empty());
+        let usable = || {
+            self.accounts
+                .iter()
+                .filter(|a| a.enabled && !a.server.trim().is_empty())
+        };
         usable()
             .find(|a| a.short_name.eq_ignore_ascii_case(name))
             .or_else(|| usable().find(|a| a.id == name))
@@ -252,7 +260,10 @@ impl Settings {
             }
             let lower = a.short_name.to_ascii_lowercase();
             if seen.contains(&lower) {
-                return Err(format!("The short name \"{}\" is used by two accounts", a.short_name));
+                return Err(format!(
+                    "The short name \"{}\" is used by two accounts",
+                    a.short_name
+                ));
             }
             seen.push(lower);
         }
@@ -344,9 +355,17 @@ impl Settings {
                 continue;
             }
             let a = &self.accounts[i];
-            let src = if a.label.trim().is_empty() { a.username.clone() } else { a.label.clone() };
+            let src = if a.label.trim().is_empty() {
+                a.username.clone()
+            } else {
+                a.label.clone()
+            };
             let base = short_name_from(&src);
-            let taken = |n: &str| self.accounts.iter().any(|o| o.short_name.eq_ignore_ascii_case(n));
+            let taken = |n: &str| {
+                self.accounts
+                    .iter()
+                    .any(|o| o.short_name.eq_ignore_ascii_case(n))
+            };
             let mut name = base.clone();
             let mut k = 2;
             while taken(&name) {
@@ -356,13 +375,18 @@ impl Settings {
             self.accounts[i].short_name = name;
         }
         if !self.accounts.iter().any(|a| a.id == self.default_account) {
-            self.default_account = self.accounts.first().map(|a| a.id.clone()).unwrap_or_default();
+            self.default_account = self
+                .accounts
+                .first()
+                .map(|a| a.id.clone())
+                .unwrap_or_default();
         }
         if self.rtp_port_min == 0 || self.rtp_port_max <= self.rtp_port_min {
             self.rtp_port_min = 10000;
             self.rtp_port_max = 20000;
         }
-        self.codecs.retain(|c| matches!(c.as_str(), "opus" | "g722" | "pcmu" | "pcma"));
+        self.codecs
+            .retain(|c| matches!(c.as_str(), "opus" | "g722" | "pcmu" | "pcma"));
         if self.codecs.is_empty() {
             self.codecs = vec!["pcmu".into(), "pcma".into()];
         }
@@ -384,7 +408,8 @@ impl Settings {
                 tracing::warn!("couldn't tidy old wallet entries: {e}");
             }
         }
-        self.write_file().map_err(|e| format!("Could not save settings: {e}"))
+        self.write_file()
+            .map_err(|e| format!("Could not save settings: {e}"))
     }
 
     fn write_file(&self) -> std::io::Result<()> {
@@ -409,7 +434,11 @@ impl Settings {
         {
             use std::io::Write;
             let mut f = opts.open(&tmp)?;
-            f.write_all(serde_json::to_string_pretty(&on_disk).unwrap_or_default().as_bytes())?;
+            f.write_all(
+                serde_json::to_string_pretty(&on_disk)
+                    .unwrap_or_default()
+                    .as_bytes(),
+            )?;
             f.sync_all()?;
         }
         std::fs::rename(tmp, Self::path())
@@ -417,21 +446,27 @@ impl Settings {
 }
 
 /// Passwords known to be in the wallet already (so routine saves don't rewrite them).
-static STORED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> = std::sync::Mutex::new(None);
+static STORED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
 
 fn remember_stored(id: &str, password: &str) {
     let mut g = STORED.lock().unwrap_or_else(|e| e.into_inner());
-    g.get_or_insert_with(Default::default).insert(id.to_string(), password.to_string());
+    g.get_or_insert_with(Default::default)
+        .insert(id.to_string(), password.to_string());
 }
 
 fn already_stored(id: &str, password: &str) -> bool {
     let g = STORED.lock().unwrap_or_else(|e| e.into_inner());
-    g.as_ref().and_then(|m| m.get(id)).is_some_and(|p| p == password)
+    g.as_ref()
+        .and_then(|m| m.get(id))
+        .is_some_and(|p| p == password)
 }
 
 /// Letters, digits and - _ . @ only (no spaces), so it can be typed after `-a`.
 pub fn valid_short_name(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.@".contains(c))
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.@".contains(c))
 }
 
 /// "Telnyx - Tim McQueen" -> "telnyx-tim-mcqueen".
@@ -439,10 +474,24 @@ fn short_name_from(s: &str) -> String {
     let mapped: String = s
         .to_ascii_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || "_.@".contains(c) { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "_.@".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let joined = mapped.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
-    if joined.is_empty() { "account".into() } else { joined }
+    let joined = mapped
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if joined.is_empty() {
+        "account".into()
+    } else {
+        joined
+    }
 }
 
 /// Three-way merge for windows sharing settings.json: what this window changed (`base` ->
@@ -451,7 +500,8 @@ fn short_name_from(s: &str) -> String {
 pub fn merge_settings(base: &Settings, mine: &Settings, theirs: &Settings) -> Settings {
     use serde_json::{Map, Value};
     let v = |s: &Settings| serde_json::to_value(s).unwrap_or(Value::Null);
-    let (Value::Object(b), Value::Object(m), Value::Object(t)) = (v(base), v(mine), v(theirs)) else {
+    let (Value::Object(b), Value::Object(m), Value::Object(t)) = (v(base), v(mine), v(theirs))
+    else {
         return mine.clone();
     };
     let mut out = Map::new();
@@ -460,21 +510,23 @@ pub fn merge_settings(base: &Settings, mine: &Settings, theirs: &Settings) -> Se
         let bv = b.get(k).unwrap_or(&Value::Null);
         out.insert(k.clone(), if mv == bv { tv.clone() } else { mv.clone() });
     }
-    let mut merged: Settings = serde_json::from_value(Value::Object(out)).unwrap_or_else(|_| mine.clone());
+    let mut merged: Settings =
+        serde_json::from_value(Value::Object(out)).unwrap_or_else(|_| mine.clone());
 
     // Accounts, by id.
     let find = |list: &[Account], id: &str| list.iter().find(|a| a.id == id).cloned();
     let mut accounts = Vec::new();
     for ta in &theirs.accounts {
         match (find(&base.accounts, &ta.id), find(&mine.accounts, &ta.id)) {
-            (Some(_), None) => {}                                   // deleted here
-            (Some(ba), Some(ma)) if ma != ba => accounts.push(ma),  // edited here
+            (Some(_), None) => {}                                  // deleted here
+            (Some(ba), Some(ma)) if ma != ba => accounts.push(ma), // edited here
             (_, Some(ma)) if find(&base.accounts, &ta.id).is_none() => accounts.push(ma),
-            _ => accounts.push(ta.clone()),                         // theirs (or untouched)
+            _ => accounts.push(ta.clone()), // theirs (or untouched)
         }
     }
     for ma in &mine.accounts {
-        let new_here = find(&base.accounts, &ma.id).is_none() && find(&theirs.accounts, &ma.id).is_none();
+        let new_here =
+            find(&base.accounts, &ma.id).is_none() && find(&theirs.accounts, &ma.id).is_none();
         if new_here {
             accounts.push(ma.clone());
         }
@@ -489,14 +541,24 @@ mod tests {
     use super::*;
 
     fn acc(id: &str, label: &str, user: &str, domain: &str, enabled: bool) -> Account {
-        Account { id: id.into(), label: label.into(), username: user.into(), domain: domain.into(),
-                  server: "sip.example.com".into(), enabled, ..Account::default() }
+        Account {
+            id: id.into(),
+            label: label.into(),
+            username: user.into(),
+            domain: domain.into(),
+            server: "sip.example.com".into(),
+            enabled,
+            ..Account::default()
+        }
     }
 
     fn two() -> Settings {
         Settings {
-            accounts: vec![acc("w1", "Work", "alice", "ex.com", true), acc("h1", "Home", "bob", "ex.com", false),
-                           acc("p1", "Personal", "carol", "ex.com", true)],
+            accounts: vec![
+                acc("w1", "Work", "alice", "ex.com", true),
+                acc("h1", "Home", "bob", "ex.com", false),
+                acc("p1", "Personal", "carol", "ex.com", true),
+            ],
             ..Settings::default()
         }
     }
@@ -530,7 +592,10 @@ mod tests {
         s.accounts[2].label = "Telnyx - Tim McQueen".into();
         s.normalize();
         let names: Vec<&str> = s.accounts.iter().map(|a| a.short_name.as_str()).collect();
-        assert_eq!(names, vec!["telnyx-tim-mcqueen", "home", "telnyx-tim-mcqueen-2"]);
+        assert_eq!(
+            names,
+            vec!["telnyx-tim-mcqueen", "home", "telnyx-tim-mcqueen-2"]
+        );
         assert!(s.validate().is_ok());
         // Saving checks them.
         s.accounts[1].short_name = "Telnyx-Tim-McQueen".into();
@@ -547,7 +612,9 @@ mod tests {
         mine.dnd = true;
         mine.accounts[0].display_name = "Alice W".into();
         let mut theirs = base.clone();
-        theirs.accounts.push(acc("x1", "Extra", "dave", "ex.com", true));
+        theirs
+            .accounts
+            .push(acc("x1", "Extra", "dave", "ex.com", true));
         theirs.codecs = vec!["pcmu".into()];
         let m = merge_settings(&base, &mine, &theirs);
         let ids: Vec<&str> = m.accounts.iter().map(|a| a.id.as_str()).collect();
@@ -563,7 +630,11 @@ mod tests {
         let mut theirs = base.clone();
         theirs.accounts[2].label = "Private".into();
         let m = merge_settings(&base, &mine, &theirs);
-        let got: Vec<(&str, &str)> = m.accounts.iter().map(|a| (a.id.as_str(), a.label.as_str())).collect();
+        let got: Vec<(&str, &str)> = m
+            .accounts
+            .iter()
+            .map(|a| (a.id.as_str(), a.label.as_str()))
+            .collect();
         assert_eq!(got, vec![("w1", "Work"), ("p1", "Private"), ("n1", "New")]);
 
         // The other window deleted an account this window didn't touch: it stays deleted.
@@ -577,9 +648,17 @@ mod tests {
     fn for_engine() {
         let s = two();
         let only = s.for_engine(Some("w1"));
-        let on: Vec<&str> = only.accounts.iter().filter(|a| a.enabled).map(|a| a.id.as_str()).collect();
+        let on: Vec<&str> = only
+            .accounts
+            .iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.id.as_str())
+            .collect();
         assert_eq!(on, vec!["w1"]);
         assert!(s.for_engine(None).accounts.iter().all(|a| !a.enabled));
-        assert!(s.for_engine(Some("h1")).accounts.iter().all(|a| !a.enabled), "a disabled account stays off");
+        assert!(
+            s.for_engine(Some("h1")).accounts.iter().all(|a| !a.enabled),
+            "a disabled account stays off"
+        );
     }
 }

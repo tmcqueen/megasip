@@ -79,7 +79,10 @@ fn prune(c: &Connection) -> Result<()> {
     for (pid, start) in rows {
         if !alive(pid, start) {
             // Only that process's row: the PID may have been reused and re-registered since.
-            c.execute("DELETE FROM instances WHERE pid = ?1 AND proc_start = ?2", params![pid, start])?;
+            c.execute(
+                "DELETE FROM instances WHERE pid = ?1 AND proc_start = ?2",
+                params![pid, start],
+            )?;
         }
     }
     Ok(())
@@ -106,7 +109,13 @@ pub fn unregister_self(c: &Connection) {
 pub fn live(c: &Connection) -> Result<Vec<Instance>> {
     prune(c)?;
     c.prepare("SELECT pid, account_id, started_at FROM instances ORDER BY started_at, pid")?
-        .query_map([], |r| Ok(Instance { pid: r.get(0)?, account_id: r.get(1)?, started_at: r.get(2)? }))?
+        .query_map([], |r| {
+            Ok(Instance {
+                pid: r.get(0)?,
+                account_id: r.get(1)?,
+                started_at: r.get(2)?,
+            })
+        })?
         .collect()
 }
 
@@ -116,11 +125,20 @@ pub fn acquire(c: &mut Connection, account: &str) -> Result<std::result::Result<
     acquire_as(c, me(), account)
 }
 
-pub fn acquire_as(c: &mut Connection, (pid, start): (u32, i64), account: &str) -> Result<std::result::Result<(), u32>> {
+pub fn acquire_as(
+    c: &mut Connection,
+    (pid, start): (u32, i64),
+    account: &str,
+) -> Result<std::result::Result<(), u32>> {
     let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
     prune(&tx)?;
-    let holder: Option<u32> =
-        tx.query_row("SELECT pid FROM instances WHERE account_id = ?1", [account], |r| r.get(0)).optional()?;
+    let holder: Option<u32> = tx
+        .query_row(
+            "SELECT pid FROM instances WHERE account_id = ?1",
+            [account],
+            |r| r.get(0),
+        )
+        .optional()?;
     if let Some(h) = holder.filter(|&h| h != pid) {
         return Ok(Err(h));
     }
@@ -139,13 +157,21 @@ pub fn release(c: &Connection) {
 }
 
 pub fn release_pid(c: &Connection, pid: u32) {
-    let _ = c.execute("UPDATE instances SET account_id = NULL WHERE pid = ?1", [pid]);
+    let _ = c.execute(
+        "UPDATE instances SET account_id = NULL WHERE pid = ?1",
+        [pid],
+    );
 }
 
 /// The live process that has `account` active, if any.
 pub fn holder(c: &Connection, account: &str) -> Result<Option<u32>> {
     prune(c)?;
-    c.query_row("SELECT pid FROM instances WHERE account_id = ?1", [account], |r| r.get(0)).optional()
+    c.query_row(
+        "SELECT pid FROM instances WHERE account_id = ?1",
+        [account],
+        |r| r.get(0),
+    )
+    .optional()
 }
 
 /// One account's calls, oldest first.
@@ -197,7 +223,11 @@ mod tests {
     use super::*;
 
     fn temp_db() -> (Connection, std::path::PathBuf) {
-        let p = std::env::temp_dir().join(format!("megasip-test-{}-{}.db", std::process::id(), rand::random::<u64>()));
+        let p = std::env::temp_dir().join(format!(
+            "megasip-test-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
         (open_at(&p).unwrap(), p)
     }
 
@@ -212,7 +242,10 @@ mod tests {
         let (mut c, p) = temp_db();
         assert_eq!(acquire_as(&mut c, me(), "a").unwrap(), Ok(()));
         let init = (1, proc_start(1).expect("pid 1 is readable"));
-        assert_eq!(acquire_as(&mut c, init, "a").unwrap(), Err(std::process::id()));
+        assert_eq!(
+            acquire_as(&mut c, init, "a").unwrap(),
+            Err(std::process::id())
+        );
         // Asking again for your own account is fine.
         assert_eq!(acquire_as(&mut c, me(), "a").unwrap(), Ok(()));
         release_pid(&c, std::process::id());
@@ -223,7 +256,8 @@ mod tests {
     #[test]
     fn stale_dead_pid_is_reclaimed() {
         let (mut c, p) = temp_db();
-        c.execute("INSERT INTO instances VALUES (999999, 5, 'a', 0)", []).unwrap();
+        c.execute("INSERT INTO instances VALUES (999999, 5, 'a', 0)", [])
+            .unwrap();
         assert!(live(&c).unwrap().iter().all(|i| i.pid != 999999));
         assert_eq!(acquire(&mut c, "a").unwrap(), Ok(()));
         cleanup(p);
@@ -232,7 +266,8 @@ mod tests {
     #[test]
     fn stale_reused_pid_is_reclaimed() {
         let (mut c, p) = temp_db();
-        c.execute("INSERT INTO instances VALUES (1, 0, 'a', 0)", []).unwrap();
+        c.execute("INSERT INTO instances VALUES (1, 0, 'a', 0)", [])
+            .unwrap();
         assert_eq!(acquire(&mut c, "a").unwrap(), Ok(()));
         assert_eq!(holder(&c, "a").unwrap(), Some(std::process::id()));
         cleanup(p);
@@ -241,7 +276,12 @@ mod tests {
     #[test]
     fn history_scoped_and_trimmed() {
         let (c, p) = temp_db();
-        let e = |acc: &str, i: i64| HistoryEntry { id: format!("{acc}{i}"), account_id: acc.into(), time: i, ..Default::default() };
+        let e = |acc: &str, i: i64| HistoryEntry {
+            id: format!("{acc}{i}"),
+            account_id: acc.into(),
+            time: i,
+            ..Default::default()
+        };
         for i in 0..1005 {
             add_history(&c, &e("a", i)).unwrap();
         }

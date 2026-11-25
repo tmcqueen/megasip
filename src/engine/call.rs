@@ -98,7 +98,9 @@ pub struct Call {
 }
 
 fn unix(t: SystemTime) -> i64 {
-    t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// ACK for a non-2xx final response (same branch as the INVITE).
@@ -111,7 +113,10 @@ pub fn ack_for_failure(invite: &SipMsg, resp: &SipMsg) -> SipMsg {
     if let Some(f) = invite.header("From") {
         ack.add("From", f);
     }
-    ack.add("To", resp.header("To").or(invite.header("To")).unwrap_or(""));
+    ack.add(
+        "To",
+        resp.header("To").or(invite.header("To")).unwrap_or(""),
+    );
     ack.add("Call-ID", invite.call_id());
     ack.add("CSeq", format!("{} ACK", invite.cseq().0));
     for r in invite.headers_all("Route") {
@@ -138,37 +143,61 @@ pub fn target_uri(number: &str, prefix: &str, domain: &str, proto: Proto) -> Str
     if host.parse::<std::net::IpAddr>().is_ok() {
         return format!("sip:{n}");
     }
-    let looks_like_number = n.chars().all(|c| c.is_ascii_digit() || " +-().*#/".contains(c));
-    let user = if looks_like_number { format!("{}{}", prefix, clean_number(n)) } else { n.to_string() };
+    let looks_like_number = n
+        .chars()
+        .all(|c| c.is_ascii_digit() || " +-().*#/".contains(c));
+    let user = if looks_like_number {
+        format!("{}{}", prefix, clean_number(n))
+    } else {
+        n.to_string()
+    };
     let _ = proto;
     format!("sip:{user}@{domain}")
 }
 
 fn clean_number(n: &str) -> String {
-    n.chars().filter(|c| c.is_ascii_digit() || matches!(c, '+' | '*' | '#')).collect()
+    n.chars()
+        .filter(|c| c.is_ascii_digit() || matches!(c, '+' | '*' | '#'))
+        .collect()
 }
 
 impl Engine {
     fn codecs(&self) -> Vec<CodecKind> {
-        self.settings.codecs.iter().filter_map(|c| CodecKind::from_name(c)).collect()
+        self.settings
+            .codecs
+            .iter()
+            .filter_map(|c| CodecKind::from_name(c))
+            .collect()
     }
 
     fn srtp_mode(&self, acc: &str) -> SrtpMode {
-        SrtpMode::from_str(self.accs.get(acc).map(|a| a.cfg.srtp.as_str()).unwrap_or("off"))
+        SrtpMode::from_str(
+            self.accs
+                .get(acc)
+                .map(|a| a.cfg.srtp.as_str())
+                .unwrap_or("off"),
+        )
     }
 
     pub(crate) fn info(&self, c: &Call) -> CallInfo {
         CallInfo {
             id: c.id,
             account_id: c.acc.clone(),
-            direction: if c.outgoing { "out".into() } else { "in".into() },
+            direction: if c.outgoing {
+                "out".into()
+            } else {
+                "in".into()
+            },
             number: c.number.clone(),
             name: c.name.clone(),
             uri: c.remote_uri.clone(),
             state: c.state.as_str().into(),
             held: c.hold,
             remote_held: c.remote_hold,
-            codec: c.codec.map(|f| f.codec.label().to_string()).unwrap_or_default(),
+            codec: c
+                .codec
+                .map(|f| f.codec.label().to_string())
+                .unwrap_or_default(),
             secure: c.srtp_rx.is_some(),
             started: unix(c.started),
             connected_at: c.connected_at.map(unix),
@@ -186,7 +215,10 @@ impl Engine {
     /// Tones and ringing follow the set of calls.
     pub(crate) fn update_audio(&mut self) {
         let any_incoming = self.calls.values().any(|c| c.state == State::Incoming);
-        let any_active = self.calls.values().any(|c| c.state == State::Connected || c.state == State::Early);
+        let any_active = self
+            .calls
+            .values()
+            .any(|c| c.state == State::Connected || c.state == State::Early);
         self.hub.set_ring(if !any_incoming {
             Ring::Off
         } else if any_active {
@@ -194,11 +226,20 @@ impl Engine {
         } else {
             Ring::Ringtone
         });
-        let ringback = self.calls.values().any(|c| c.outgoing && c.state == State::Ringing);
-        self.hub.set_tone(if ringback { Some(Tone::Ringback) } else { None });
+        let ringback = self
+            .calls
+            .values()
+            .any(|c| c.outgoing && c.state == State::Ringing);
+        self.hub
+            .set_tone(if ringback { Some(Tone::Ringback) } else { None });
     }
 
-    fn alloc_call(&mut self, acc: &str, outgoing: bool, peer: (Flow, SocketAddr)) -> Option<CallId> {
+    fn alloc_call(
+        &mut self,
+        acc: &str,
+        outgoing: bool,
+        peer: (Flow, SocketAddr),
+    ) -> Option<CallId> {
         let range = (self.settings.rtp_port_min, self.settings.rtp_port_max);
         let id = self.next_call;
         self.next_call += 1;
@@ -228,7 +269,11 @@ impl Engine {
             id,
             acc: acc.to_string(),
             outgoing,
-            state: if outgoing { State::Calling } else { State::Incoming },
+            state: if outgoing {
+                State::Calling
+            } else {
+                State::Incoming
+            },
             sip_call_id: String::new(),
             local_tag: random_token(12),
             remote_tag: None,
@@ -291,7 +336,11 @@ impl Engine {
             return a.contact();
         }
         let ip = transport::local_ip_for(peer).unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
-        let user = if a.cfg.username.is_empty() { "megasip".to_string() } else { a.cfg.username.clone() };
+        let user = if a.cfg.username.is_empty() {
+            "megasip".to_string()
+        } else {
+            a.cfg.username.clone()
+        };
         format!("<sip:{}@{}:{}>", user, ip, self.tr.udp_local.port())
     }
 
@@ -303,7 +352,8 @@ impl Engine {
                     Some(c) if a.proto == Proto::Udp => c.to_string(),
                     _ => format!(
                         "{}:{}",
-                        transport::local_ip_for(peer.1).unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+                        transport::local_ip_for(peer.1)
+                            .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
                         self.tr.udp_local.port()
                     ),
                 };
@@ -327,7 +377,10 @@ impl Engine {
 
     pub(crate) fn dial(&mut self, acc_id: &str, number: &str) {
         // Nothing that could break out of a header line (pasted text, links).
-        let cleaned: String = number.chars().filter(|c| !c.is_control() && *c != '<' && *c != '>' && *c != '"').collect();
+        let cleaned: String = number
+            .chars()
+            .filter(|c| !c.is_control() && *c != '<' && *c != '>' && *c != '"')
+            .collect();
         let number = cleaned.trim();
         if number.is_empty() {
             return;
@@ -343,8 +396,14 @@ impl Engine {
         } else {
             self.settings.default_account.clone()
         };
-        let mut acc_id = if self.accs.get(&acc_id).is_some_and(|a| a.ready()) { acc_id } else { "local".to_string() };
-        let Some(acc) = self.accs.get(&acc_id) else { return };
+        let mut acc_id = if self.accs.get(&acc_id).is_some_and(|a| a.ready()) {
+            acc_id
+        } else {
+            "local".to_string()
+        };
+        let Some(acc) = self.accs.get(&acc_id) else {
+            return;
+        };
         let domain = acc.cfg.sip_domain();
         let uri = target_uri(number, &acc.cfg.dialing_prefix, &domain, acc.proto);
         // Where it goes (RFC 3261 §8.1.2, like MicroSIP/pjsip): through the account when it
@@ -352,18 +411,33 @@ impl Engine {
         // straight to the host in the address.
         let hp = msg::uri_hostport(&uri);
         let same_place = |other: &str| {
-            let o = other.trim().trim_start_matches("sip:").split(';').next().unwrap_or("");
+            let o = other
+                .trim()
+                .trim_start_matches("sip:")
+                .split(';')
+                .next()
+                .unwrap_or("");
             let (oh, op) = transport::split_host_port(o);
             let (th, tp) = transport::split_host_port(&hp);
-            !oh.is_empty() && th.eq_ignore_ascii_case(oh) && (tp.is_none() || tp == op || (op.is_none() && tp == Some(acc.proto.default_port())))
+            !oh.is_empty()
+                && th.eq_ignore_ascii_case(oh)
+                && (tp.is_none()
+                    || tp == op
+                    || (op.is_none() && tp == Some(acc.proto.default_port())))
         };
-        let ours = !acc.local_only && (!acc.cfg.proxy.trim().is_empty() || same_place(&domain) || same_place(&acc.cfg.server));
+        let ours = !acc.local_only
+            && (!acc.cfg.proxy.trim().is_empty()
+                || same_place(&domain)
+                || same_place(&acc.cfg.server));
         let peer = if let (true, Some(dest)) = (ours, acc.dest) {
             (acc.flow, dest)
         } else {
             let (h, p) = transport::split_host_port(&hp);
             use std::net::ToSocketAddrs;
-            let resolved = (h, p.unwrap_or(5060)).to_socket_addrs().ok().and_then(|mut it| it.find(|a| a.is_ipv4()));
+            let resolved = (h, p.unwrap_or(5060))
+                .to_socket_addrs()
+                .ok()
+                .and_then(|mut it| it.find(|a| a.is_ipv4()));
             match resolved {
                 Some(a) => {
                     // A direct UDP call can't use a TCP/TLS account's Contact.
@@ -378,10 +452,13 @@ impl Engine {
                 }
             }
         };
-        let Some(id) = self.alloc_call(&acc_id, true, peer) else { return };
+        let Some(id) = self.alloc_call(&acc_id, true, peer) else {
+            return;
+        };
         let acc = &self.accs[&acc_id];
         let local_aor = if acc.local_only {
-            let ip = transport::local_ip_for(peer.1).unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
+            let ip =
+                transport::local_ip_for(peer.1).unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
             format!("sip:megasip@{ip}")
         } else {
             acc.aor()
@@ -391,7 +468,11 @@ impl Engine {
         } else if acc.cfg.display_name.trim().is_empty() {
             format!("<{local_aor}>")
         } else {
-            format!("{} <{}>", msg::quote_display(acc.cfg.display_name.trim()), local_aor)
+            format!(
+                "{} <{}>",
+                msg::quote_display(acc.cfg.display_name.trim()),
+                local_aor
+            )
         };
         let route_set = if acc.cfg.proxy.trim().is_empty() || acc.local_only {
             Vec::new()
@@ -409,7 +490,8 @@ impl Engine {
         c.number = uri_user(&uri);
         if hide {
             c.extra_invite_headers.push(("Privacy".into(), "id".into()));
-            c.extra_invite_headers.push(("P-Preferred-Identity".into(), format!("<{local_aor}>")));
+            c.extra_invite_headers
+                .push(("P-Preferred-Identity".into(), format!("<{local_aor}>")));
         }
         self.settings.last_number = number.to_string();
         self.send_invite(id);
@@ -507,7 +589,11 @@ impl Engine {
                 if let Some(tag) = resp.to_tag() {
                     c.remote_tag = Some(tag);
                 }
-                c.state = if has_sdp { State::Early } else { State::Ringing };
+                c.state = if has_sdp {
+                    State::Early
+                } else {
+                    State::Ringing
+                };
             }
             if has_sdp {
                 self.apply_answer(id, &resp.body_str());
@@ -527,7 +613,11 @@ impl Engine {
                 if let Some(ct) = resp.header("Contact") {
                     c.remote_target = parse_name_addr(ct).uri;
                 }
-                let mut rr: Vec<String> = resp.headers_all("Record-Route").iter().map(|s| s.to_string()).collect();
+                let mut rr: Vec<String> = resp
+                    .headers_all("Record-Route")
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 if !rr.is_empty() {
                     rr.reverse();
                     c.route_set = rr;
@@ -567,7 +657,10 @@ impl Engine {
             return;
         }
         // Failure.
-        let invite = self.calls[&id].invite.clone().unwrap_or_else(|| req.clone());
+        let invite = self.calls[&id]
+            .invite
+            .clone()
+            .unwrap_or_else(|| req.clone());
         if code != 408 || resp.header("Via").is_some() {
             let ack = ack_for_failure(&invite, resp);
             let peer = self.calls[&id].peer;
@@ -645,8 +738,13 @@ impl Engine {
             let peer = self.calls[&id].peer;
             self.tr.send(peer.0, peer.1, &ack.to_bytes());
             if code == 491 {
-                let ms = if self.calls[&id].outgoing { 2100 + rand::random::<u64>() % 2000 } else { rand::random::<u64>() % 2000 };
-                self.calls.get_mut(&id).unwrap().reinvite_retry = Some(Instant::now() + Duration::from_millis(ms));
+                let ms = if self.calls[&id].outgoing {
+                    2100 + rand::random::<u64>() % 2000
+                } else {
+                    rand::random::<u64>() % 2000
+                };
+                self.calls.get_mut(&id).unwrap().reinvite_retry =
+                    Some(Instant::now() + Duration::from_millis(ms));
             } else if code == 481 || code == 408 {
                 self.end_call(id, "Call lost");
                 return;
@@ -662,7 +760,9 @@ impl Engine {
     fn apply_answer(&mut self, id: CallId, body: &str) {
         let codecs = self.codecs();
         let mode = self.srtp_mode(&self.calls[&id].acc);
-        let Some(remote) = sdp::parse(body) else { return };
+        let Some(remote) = sdp::parse(body) else {
+            return;
+        };
         let c = self.calls.get_mut(&id).unwrap();
         let Some(fmt) = sdp::choose(&remote, &codecs, false) else {
             tracing::warn!("answer has no codec we offered");
@@ -670,7 +770,14 @@ impl Engine {
         };
         let te = sdp::choose_te(&remote, fmt.codec);
         let ours = c.local_sdp.crypto.clone();
-        let srtp_rx = match (&ours, remote.cryptos.iter().find(|cr| ours.as_ref().is_some_and(|o| o.0 == cr.tag)).or(remote.cryptos.first())) {
+        let srtp_rx = match (
+            &ours,
+            remote
+                .cryptos
+                .iter()
+                .find(|cr| ours.as_ref().is_some_and(|o| o.0 == cr.tag))
+                .or(remote.cryptos.first()),
+        ) {
             (Some(_), Some(cr)) => {
                 let mut k = cr.master_key.clone();
                 k.extend_from_slice(&cr.master_salt);
@@ -682,7 +789,11 @@ impl Engine {
             c.reason = "Remote does not support SRTP".into();
             return;
         }
-        let srtp_tx = if srtp_rx.is_some() { ours.map(|(_, s, k)| (s, k)) } else { None };
+        let srtp_tx = if srtp_rx.is_some() {
+            ours.map(|(_, s, k)| (s, k))
+        } else {
+            None
+        };
         c.remote_hold = matches!(remote.direction, Direction::SendOnly | Direction::Inactive);
         c.codec = Some(fmt);
         c.te_pt = te;
@@ -711,7 +822,10 @@ impl Engine {
         let Some(sock) = c.sock.take() else { return };
         match Stream::new(id, sock, cfg, tx) {
             Ok(s) => {
-                if c.state == State::Early || c.state == State::Connected || c.state == State::Ringing {
+                if c.state == State::Early
+                    || c.state == State::Connected
+                    || c.state == State::Ringing
+                {
                     self.hub.add_stream(s.clone());
                 }
                 c.stream = Some(s);
@@ -792,9 +906,17 @@ impl Engine {
         req
     }
 
-    fn send_in_dialog(&mut self, id: CallId, method: &str, extra: Vec<(String, String)>, body: Option<(&str, Vec<u8>)>) {
+    fn send_in_dialog(
+        &mut self,
+        id: CallId,
+        method: &str,
+        extra: Vec<(String, String)>,
+        body: Option<(&str, Vec<u8>)>,
+    ) {
         let ua = self.user_agent.clone();
-        let Some(c) = self.calls.get_mut(&id) else { return };
+        let Some(c) = self.calls.get_mut(&id) else {
+            return;
+        };
         c.local_cseq += 1;
         let cseq = c.local_cseq;
         let c = &self.calls[&id];
@@ -840,12 +962,20 @@ impl Engine {
         // In a re-offer, offer just the codec in use (keeps the PBX from switching).
         let body = match c.codec {
             Some(f) => {
-                let te: Vec<(u8, u32)> = c.te_pt.map(|p| vec![(p, f.codec.rtp_clock())]).unwrap_or_default();
+                let te: Vec<(u8, u32)> = c
+                    .te_pt
+                    .map(|p| vec![(p, f.codec.rtp_clock())])
+                    .unwrap_or_default();
                 sdp::build(&c.local_sdp, &[f], &te)
             }
             None => sdp::offer(&c.local_sdp, &all_codecs),
         };
-        self.send_in_dialog(id, "INVITE", Vec::new(), Some(("application/sdp", body.into_bytes())));
+        self.send_in_dialog(
+            id,
+            "INVITE",
+            Vec::new(),
+            Some(("application/sdp", body.into_bytes())),
+        );
     }
 
     // ---------------------------------------------------------------- user actions
@@ -880,7 +1010,9 @@ impl Engine {
     }
 
     pub(crate) fn reject(&mut self, id: CallId, code: u16, reason: &str) {
-        let Some(c) = self.calls.get_mut(&id) else { return };
+        let Some(c) = self.calls.get_mut(&id) else {
+            return;
+        };
         if c.state != State::Incoming {
             return;
         }
@@ -933,7 +1065,11 @@ impl Engine {
                 return;
             };
             let te = sdp::choose_te(&remote, fmt.codec);
-            let their = remote.cryptos.iter().find(|cr| CryptoSuite::parse(cr.crypto_suite.as_str()).is_some()).cloned();
+            let their = remote
+                .cryptos
+                .iter()
+                .find(|cr| CryptoSuite::parse(cr.crypto_suite.as_str()).is_some())
+                .cloned();
             let use_srtp = their.is_some() && (mode != SrtpMode::Off || remote.savp);
             if mode == SrtpMode::Mandatory && !use_srtp {
                 let r = inv.make_response(488, "Not Acceptable Here", Some(&c.local_tag));
@@ -955,7 +1091,9 @@ impl Engine {
             c.local_sdp.savp = remote.savp && use_srtp;
             c.remote_hold = matches!(remote.direction, Direction::SendOnly | Direction::Inactive);
             c.local_sdp.direction = sdp::answer_direction(remote.direction, false);
-            let te_list: Vec<(u8, u32)> = te.map(|p| vec![(p, fmt.codec.rtp_clock())]).unwrap_or_default();
+            let te_list: Vec<(u8, u32)> = te
+                .map(|p| vec![(p, fmt.codec.rtp_clock())])
+                .unwrap_or_default();
             body = sdp::build(&c.local_sdp, &[fmt], &te_list);
             c.codec = Some(fmt);
             c.te_pt = te;
@@ -1002,7 +1140,9 @@ impl Engine {
     }
 
     pub(crate) fn set_hold(&mut self, id: CallId, on: bool) {
-        let Some(c) = self.calls.get_mut(&id) else { return };
+        let Some(c) = self.calls.get_mut(&id) else {
+            return;
+        };
         if c.state != State::Connected || c.hold == on {
             return;
         }
@@ -1042,7 +1182,12 @@ impl Engine {
         match method.as_str() {
             "info" => {
                 let body = format!("Signal={}\r\nDuration=160\r\n", d);
-                self.send_in_dialog(id, "INFO", Vec::new(), Some(("application/dtmf-relay", body.into_bytes())));
+                self.send_in_dialog(
+                    id,
+                    "INFO",
+                    Vec::new(),
+                    Some(("application/dtmf-relay", body.into_bytes())),
+                );
             }
             "inband" => {
                 if let Some(s) = stream {
@@ -1058,7 +1203,12 @@ impl Engine {
                         }
                     } else {
                         let body = format!("Signal={}\r\nDuration=160\r\n", d);
-                        self.send_in_dialog(id, "INFO", Vec::new(), Some(("application/dtmf-relay", body.into_bytes())));
+                        self.send_in_dialog(
+                            id,
+                            "INFO",
+                            Vec::new(),
+                            Some(("application/dtmf-relay", body.into_bytes())),
+                        );
                     }
                 }
             }
@@ -1071,29 +1221,52 @@ impl Engine {
             return;
         }
         let acc = self.acc(&c.acc);
-        let target = target_uri(to, &acc.cfg.dialing_prefix, &acc.cfg.sip_domain(), acc.proto);
+        let target = target_uri(
+            to,
+            &acc.cfg.dialing_prefix,
+            &acc.cfg.sip_domain(),
+            acc.proto,
+        );
         let by = format!("<{}>", acc.aor());
         self.send_in_dialog(
             id,
             "REFER",
-            vec![("Refer-To".into(), format!("<{target}>")), ("Referred-By".into(), by)],
+            vec![
+                ("Refer-To".into(), format!("<{target}>")),
+                ("Referred-By".into(), by),
+            ],
             None,
         );
-        self.calls.get_mut(&id).unwrap().transfer = format!("Transferring to {}", uri_user(&target));
+        self.calls.get_mut(&id).unwrap().transfer =
+            format!("Transferring to {}", uri_user(&target));
         self.emit_call(id);
     }
 
     pub(crate) fn attended_transfer(&mut self, a: CallId, b: CallId) {
-        let (Some(ca), Some(cb)) = (self.calls.get(&a), self.calls.get(&b)) else { return };
+        let (Some(ca), Some(cb)) = (self.calls.get(&a), self.calls.get(&b)) else {
+            return;
+        };
         if ca.state != State::Connected || cb.state != State::Connected {
             return;
         }
-        let Some(rt) = cb.remote_tag.clone() else { return };
+        let Some(rt) = cb.remote_tag.clone() else {
+            return;
+        };
         let replaces = format!("{};to-tag={};from-tag={}", cb.sip_call_id, rt, cb.local_tag);
-        let target = cb.remote_uri.split(';').next().unwrap_or(&cb.remote_uri).to_string();
+        let target = cb
+            .remote_uri
+            .split(';')
+            .next()
+            .unwrap_or(&cb.remote_uri)
+            .to_string();
         let refer_to = format!("<{}?Replaces={}>", target, msg::uri_escape(&replaces));
         let by = format!("<{}>", self.acc(&ca.acc).aor());
-        self.send_in_dialog(a, "REFER", vec![("Refer-To".into(), refer_to), ("Referred-By".into(), by)], None);
+        self.send_in_dialog(
+            a,
+            "REFER",
+            vec![("Refer-To".into(), refer_to), ("Referred-By".into(), by)],
+            None,
+        );
         let c = self.calls.get_mut(&a).unwrap();
         c.transfer = "Transferring…".into();
         c.transfer_partner = Some(b);
@@ -1104,7 +1277,12 @@ impl Engine {
         self.conference = on;
         self.hub.set_conference(on);
         if on {
-            let held: Vec<CallId> = self.calls.values().filter(|c| c.state == State::Connected && c.hold).map(|c| c.id).collect();
+            let held: Vec<CallId> = self
+                .calls
+                .values()
+                .filter(|c| c.state == State::Connected && c.hold)
+                .map(|c| c.id)
+                .collect();
             for id in held {
                 // Resume without holding the others.
                 let c = self.calls.get_mut(&id).unwrap();
@@ -1131,14 +1309,19 @@ impl Engine {
             }
         }
         let user = uri_user(req.uri());
-        let to_user = req.header("To").map(|t| uri_user(&parse_name_addr(t).uri)).unwrap_or_default();
+        let to_user = req
+            .header("To")
+            .map(|t| uri_user(&parse_name_addr(t).uri))
+            .unwrap_or_default();
         let mut by_server = None;
         for (id, a) in &self.accs {
             if a.local_only {
                 continue;
             }
             if a.dest.is_some_and(|d| d.ip() == from.ip()) {
-                if !a.cfg.username.is_empty() && (a.cfg.username == user || a.cfg.username == to_user) {
+                if !a.cfg.username.is_empty()
+                    && (a.cfg.username == user || a.cfg.username == to_user)
+                {
                     return id.clone();
                 }
                 by_server.get_or_insert(id.clone());
@@ -1162,7 +1345,11 @@ impl Engine {
             return;
         }
         // Same Call-ID already being handled (forked/duplicate INVITE)?
-        if self.calls.values().any(|c| c.sip_call_id == req.call_id() && !c.outgoing) {
+        if self
+            .calls
+            .values()
+            .any(|c| c.sip_call_id == req.call_id() && !c.outgoing)
+        {
             return;
         }
         let trying = req.make_response(100, "Trying", None);
@@ -1184,8 +1371,15 @@ impl Engine {
             c.local_hdr = strip_tag(&to_hdr);
             c.remote_hdr = strip_tag(req.header("From").unwrap_or(""));
             c.remote_uri = from_na.uri.clone();
-            c.remote_target = req.header("Contact").map(|ct| parse_name_addr(ct).uri).unwrap_or(from_na.uri.clone());
-            c.route_set = req.headers_all("Record-Route").iter().map(|s| s.to_string()).collect();
+            c.remote_target = req
+                .header("Contact")
+                .map(|ct| parse_name_addr(ct).uri)
+                .unwrap_or(from_na.uri.clone());
+            c.route_set = req
+                .headers_all("Record-Route")
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             c.local_cseq = rand::random::<u16>() as u32 + 1;
             c.number = uri_user(&from_na.uri);
             c.name = from_na.display.clone();
@@ -1204,7 +1398,11 @@ impl Engine {
         // Attended transfer to us (Replaces): take over that call.
         if let Some(rep) = req.header("Replaces") {
             let callid = rep.split(';').next().unwrap_or("").trim().to_string();
-            let target = self.calls.values().find(|c| c.sip_call_id == callid && c.id != id).map(|c| c.id);
+            let target = self
+                .calls
+                .values()
+                .find(|c| c.sip_call_id == callid && c.id != id)
+                .map(|c| c.id);
             if let Some(old) = target {
                 self.calls.get_mut(&id).unwrap().replaces = Some(old);
                 self.emit(Event::Incoming(self.info(&self.calls[&id])));
@@ -1220,19 +1418,32 @@ impl Engine {
         let tag = self.calls[&id].local_tag.clone();
         let settings = self.settings.clone();
         let s = &settings;
-        let busy = self.calls.values().any(|c| c.id != id && c.state != State::Ended);
+        let busy = self
+            .calls
+            .values()
+            .any(|c| c.id != id && c.state != State::Ended);
         let deny = match s.deny_incoming.as_str() {
             "all" => true,
             "otherdomain" => {
-                let acc_domain = self.accs.get(&acc_id).map(|a| a.cfg.sip_domain()).unwrap_or_default();
+                let acc_domain = self
+                    .accs
+                    .get(&acc_id)
+                    .map(|a| a.cfg.sip_domain())
+                    .unwrap_or_default();
                 let host = msg::uri_hostport(&from_na.uri);
                 let host = transport::split_host_port(&host).0.to_string();
-                acc_id == "local" || (!acc_domain.is_empty() && !host.eq_ignore_ascii_case(&acc_domain))
+                acc_id == "local"
+                    || (!acc_domain.is_empty() && !host.eq_ignore_ascii_case(&acc_domain))
             }
             _ => false,
         };
         let forward_target = |s: &crate::config::Settings, acc: &super::Acc| {
-            target_uri(&s.forwarding_number, &acc.cfg.dialing_prefix, &acc.cfg.sip_domain(), acc.proto)
+            target_uri(
+                &s.forwarding_number,
+                &acc.cfg.dialing_prefix,
+                &acc.cfg.sip_domain(),
+                acc.proto,
+            )
         };
         let acc_snapshot = self.new_acc_snapshot(&acc_id);
         let acc = &acc_snapshot;
@@ -1269,10 +1480,15 @@ impl Engine {
         ringing.add("Allow", ALLOW);
         self.respond(&req, ringing, flow, from);
         // Auto answer: always, or when the server asks (intercom/paging headers).
-        let header_asks = req.header("Call-Info").is_some_and(|v| v.to_ascii_lowercase().contains("answer-after"))
+        let header_asks = req
+            .header("Call-Info")
+            .is_some_and(|v| v.to_ascii_lowercase().contains("answer-after"))
             || req.header("Alert-Info").is_some_and(|v| {
                 let v = v.to_ascii_lowercase();
-                v.contains("auto answer") || v.contains("autoanswer") || v.contains("info=alert-autoanswer") || v.contains("intercom")
+                v.contains("auto answer")
+                    || v.contains("autoanswer")
+                    || v.contains("info=alert-autoanswer")
+                    || v.contains("intercom")
             });
         let auto = match s.auto_answer.as_str() {
             "all" => !busy,
@@ -1318,7 +1534,11 @@ impl Engine {
         let id = self
             .calls
             .values()
-            .find(|c| !c.outgoing && c.sip_call_id == req.call_id() && c.invite.as_ref().and_then(|i| i.branch()) == Some(branch.clone()))
+            .find(|c| {
+                !c.outgoing
+                    && c.sip_call_id == req.call_id()
+                    && c.invite.as_ref().and_then(|i| i.branch()) == Some(branch.clone())
+            })
             .map(|c| c.id);
         let Some(id) = id else {
             let r = req.make_response(481, "Call/Transaction Does Not Exist", None);
@@ -1334,11 +1554,20 @@ impl Engine {
             let peer = c.peer;
             self.respond(&inv, r, peer.0, peer.1);
             // "Call completed elsewhere" (RFC 3326 Reason) is not a missed call.
-            let elsewhere = req.header("Reason").is_some_and(|r| r.contains("cause=200") || r.to_ascii_lowercase().contains("completed elsewhere"));
+            let elsewhere = req.header("Reason").is_some_and(|r| {
+                r.contains("cause=200") || r.to_ascii_lowercase().contains("completed elsewhere")
+            });
             if elsewhere {
                 self.calls.get_mut(&id).unwrap().user_rejected = true;
             }
-            self.end_call(id, if elsewhere { "Answered elsewhere" } else { "Missed" });
+            self.end_call(
+                id,
+                if elsewhere {
+                    "Answered elsewhere"
+                } else {
+                    "Missed"
+                },
+            );
         }
     }
 
@@ -1363,7 +1592,11 @@ impl Engine {
             "BYE" => {
                 let r = req.make_response(200, "OK", Some(&tag));
                 self.respond(&req, r, flow, from);
-                let reason = if self.calls[&id].state == State::Incoming { "Missed" } else { "Remote hung up" };
+                let reason = if self.calls[&id].state == State::Incoming {
+                    "Missed"
+                } else {
+                    "Remote hung up"
+                };
                 if self.calls[&id].state == State::Incoming {
                     let c = &self.calls[&id];
                     if let Some(inv) = c.invite.clone() {
@@ -1378,11 +1611,17 @@ impl Engine {
             "INFO" => {
                 let r = req.make_response(200, "OK", Some(&tag));
                 self.respond(&req, r, flow, from);
-                if req.content_type() == "application/dtmf-relay" || req.content_type() == "application/dtmf" {
+                if req.content_type() == "application/dtmf-relay"
+                    || req.content_type() == "application/dtmf"
+                {
                     let body = req.body_str();
                     let d = body
                         .lines()
-                        .find_map(|l| l.trim().strip_prefix("Signal=").or_else(|| l.trim().strip_prefix("Signal =")))
+                        .find_map(|l| {
+                            l.trim()
+                                .strip_prefix("Signal=")
+                                .or_else(|| l.trim().strip_prefix("Signal ="))
+                        })
                         .and_then(|v| v.trim().chars().next())
                         .or_else(|| body.trim().chars().next());
                     if let Some(d) = d {
@@ -1412,7 +1651,13 @@ impl Engine {
                         }
                     } else if code >= 300 {
                         let c = self.calls.get_mut(&id).unwrap();
-                        c.transfer = format!("Transfer failed: {}", body.lines().next().unwrap_or("").trim_start_matches("SIP/2.0 "));
+                        c.transfer = format!(
+                            "Transfer failed: {}",
+                            body.lines()
+                                .next()
+                                .unwrap_or("")
+                                .trim_start_matches("SIP/2.0 ")
+                        );
                         c.transfer_partner = None;
                         self.emit_call(id);
                     }
@@ -1458,7 +1703,11 @@ impl Engine {
                 return;
             };
             // Same session version: nothing changed (session refresh).
-            let unchanged = c.remote_sdp.as_ref().is_some_and(|old| old.session_version == remote.session_version && old.direction == remote.direction && old.addr == remote.addr);
+            let unchanged = c.remote_sdp.as_ref().is_some_and(|old| {
+                old.session_version == remote.session_version
+                    && old.direction == remote.direction
+                    && old.addr == remote.addr
+            });
             let fmt = c
                 .codec
                 .and_then(|cur| remote.fmts.iter().find(|f| f.codec == cur.codec).copied())
@@ -1469,7 +1718,8 @@ impl Engine {
                 return;
             };
             let te = sdp::choose_te(&remote, fmt.codec);
-            c.remote_hold = matches!(remote.direction, Direction::SendOnly | Direction::Inactive) || remote.addr.is_none();
+            c.remote_hold = matches!(remote.direction, Direction::SendOnly | Direction::Inactive)
+                || remote.addr.is_none();
             if !unchanged {
                 c.local_sdp.version += 1;
             }
@@ -1484,10 +1734,14 @@ impl Engine {
             } else {
                 None
             };
-            if let (Some(cr), Some((t, _, _))) = (remote.cryptos.first(), c.local_sdp.crypto.as_mut()) {
+            if let (Some(cr), Some((t, _, _))) =
+                (remote.cryptos.first(), c.local_sdp.crypto.as_mut())
+            {
                 *t = cr.tag;
             }
-            let te_list: Vec<(u8, u32)> = te.map(|p| vec![(p, fmt.codec.rtp_clock())]).unwrap_or_default();
+            let te_list: Vec<(u8, u32)> = te
+                .map(|p| vec![(p, fmt.codec.rtp_clock())])
+                .unwrap_or_default();
             body = Some(sdp::build(&c.local_sdp, &[fmt], &te_list));
             c.codec = Some(fmt);
             c.te_pt = te;
@@ -1531,7 +1785,9 @@ impl Engine {
     }
 
     pub(crate) fn call_ack(&mut self, req: &SipMsg) {
-        let Some(id) = self.find_dialog(req) else { return };
+        let Some(id) = self.find_dialog(req) else {
+            return;
+        };
         let c = self.calls.get_mut(&id).unwrap();
         if c.offer_in_200 && req.has_sdp() {
             c.offer_in_200 = false;
@@ -1547,7 +1803,11 @@ impl Engine {
 
     pub(crate) fn on_stray_invite_2xx(&mut self, resp: &SipMsg) {
         let cid = resp.call_id();
-        let id = self.calls.values().find(|c| c.sip_call_id == cid && c.outgoing).map(|c| c.id);
+        let id = self
+            .calls
+            .values()
+            .find(|c| c.sip_call_id == cid && c.outgoing)
+            .map(|c| c.id);
         if let Some(id) = id {
             let c = &self.calls[&id];
             if let Some(ack) = &c.ack {
@@ -1574,7 +1834,10 @@ impl Engine {
             Some((t, hdrs)) => {
                 let rep = hdrs
                     .split('&')
-                    .find_map(|h| h.strip_prefix("Replaces=").or_else(|| h.strip_prefix("replaces=")))
+                    .find_map(|h| {
+                        h.strip_prefix("Replaces=")
+                            .or_else(|| h.strip_prefix("replaces="))
+                    })
                     .map(msg::uri_unescape);
                 (t.to_string(), rep)
             }
@@ -1593,7 +1856,11 @@ impl Engine {
                     // Re-send with the Replaces header (the first INVITE went out already).
                 }
             }
-            if self.calls.get(&new_id).is_some_and(|c| c.extra_invite_headers.iter().any(|(n, _)| n == "Replaces")) {
+            if self
+                .calls
+                .get(&new_id)
+                .is_some_and(|c| c.extra_invite_headers.iter().any(|(n, _)| n == "Replaces"))
+            {
                 // Cancel the plain INVITE we just sent and resend with Replaces.
                 let branch = self.calls[&new_id].invite_branch.clone();
                 self.ctx.remove(&branch);
@@ -1608,12 +1875,19 @@ impl Engine {
         if !self.calls.contains_key(&id) {
             return;
         }
-        let state = if terminated { "terminated;reason=noresource".to_string() } else { "active;expires=60".to_string() };
+        let state = if terminated {
+            "terminated;reason=noresource".to_string()
+        } else {
+            "active;expires=60".to_string()
+        };
         let body = format!("SIP/2.0 {code} {reason}\r\n");
         self.send_in_dialog(
             id,
             "NOTIFY",
-            vec![("Event".into(), "refer".into()), ("Subscription-State".into(), state)],
+            vec![
+                ("Event".into(), "refer".into()),
+                ("Subscription-State".into(), state),
+            ],
             Some(("message/sipfrag;version=2.0", body.into_bytes())),
         );
     }
@@ -1621,7 +1895,9 @@ impl Engine {
     // ---------------------------------------------------------------- lifecycle
 
     pub(crate) fn end_call(&mut self, id: CallId, reason: &str) {
-        let Some(mut c) = self.calls.remove(&id) else { return };
+        let Some(mut c) = self.calls.remove(&id) else {
+            return;
+        };
         if c.reason.is_empty() || reason != "Hung up" {
             c.reason = reason.to_string();
         }
@@ -1648,7 +1924,9 @@ impl Engine {
     pub(crate) fn call_tick(&mut self, now: Instant) {
         let ids: Vec<CallId> = self.calls.keys().copied().collect();
         for id in ids {
-            let Some(c) = self.calls.get(&id) else { continue };
+            let Some(c) = self.calls.get(&id) else {
+                continue;
+            };
             if c.answer_at.is_some_and(|t| now >= t) && c.state == State::Incoming {
                 self.answer(id);
                 continue;
@@ -1657,13 +1935,23 @@ impl Engine {
                 match c.state {
                     State::Incoming => {
                         let acc = self.acc(&c.acc);
-                        let t = target_uri(&self.settings.forwarding_number, &acc.cfg.dialing_prefix, &acc.cfg.sip_domain(), acc.proto);
+                        let t = target_uri(
+                            &self.settings.forwarding_number,
+                            &acc.cfg.dialing_prefix,
+                            &acc.cfg.sip_domain(),
+                            acc.proto,
+                        );
                         self.redirect(id, &t);
                     }
                     // Cancelled call whose 487 never came.
                     _ if c.outgoing && c.connected_at.is_none() => {
-                        let reason = if c.reason.is_empty() { "Cancelled".to_string() } else { c.reason.clone() };
-                        self.ctx.retain(|_, t| !matches!(t.owner, TxnOwner::Call(x) if x == id));
+                        let reason = if c.reason.is_empty() {
+                            "Cancelled".to_string()
+                        } else {
+                            c.reason.clone()
+                        };
+                        self.ctx
+                            .retain(|_, t| !matches!(t.owner, TxnOwner::Call(x) if x == id));
                         self.end_call(id, &reason);
                     }
                     _ => {
@@ -1680,7 +1968,10 @@ impl Engine {
                 continue;
             }
             let ah = self.settings.auto_hangup_secs;
-            if ah > 0 && c.connected_instant.is_some_and(|t| now - t > Duration::from_secs(ah as u64)) {
+            if ah > 0
+                && c.connected_instant
+                    .is_some_and(|t| now - t > Duration::from_secs(ah as u64))
+            {
                 self.hangup(id);
             }
         }
@@ -1690,7 +1981,10 @@ impl Engine {
 fn strip_tag(h: &str) -> String {
     match h.rfind('>') {
         Some(i) => {
-            let tail: Vec<&str> = h[i + 1..].split(';').filter(|p| !p.trim().to_ascii_lowercase().starts_with("tag=")).collect();
+            let tail: Vec<&str> = h[i + 1..]
+                .split(';')
+                .filter(|p| !p.trim().to_ascii_lowercase().starts_with("tag="))
+                .collect();
             format!("{}{}", &h[..=i], tail.join(";"))
         }
         None => h.split(";tag=").next().unwrap_or(h).to_string(),
@@ -1703,11 +1997,26 @@ mod tests {
 
     #[test]
     fn targets() {
-        assert_eq!(target_uri("1001", "", "pbx.example.com", Proto::Udp), "sip:1001@pbx.example.com");
-        assert_eq!(target_uri("+1 (555) 123-4567", "9", "pbx", Proto::Udp), "sip:9+15551234567@pbx");
-        assert_eq!(target_uri("bob@example.org", "", "pbx", Proto::Udp), "sip:bob@example.org");
-        assert_eq!(target_uri("192.168.1.20", "", "pbx", Proto::Udp), "sip:192.168.1.20");
-        assert_eq!(target_uri("sip:echo@x", "", "pbx", Proto::Udp), "sip:echo@x");
+        assert_eq!(
+            target_uri("1001", "", "pbx.example.com", Proto::Udp),
+            "sip:1001@pbx.example.com"
+        );
+        assert_eq!(
+            target_uri("+1 (555) 123-4567", "9", "pbx", Proto::Udp),
+            "sip:9+15551234567@pbx"
+        );
+        assert_eq!(
+            target_uri("bob@example.org", "", "pbx", Proto::Udp),
+            "sip:bob@example.org"
+        );
+        assert_eq!(
+            target_uri("192.168.1.20", "", "pbx", Proto::Udp),
+            "sip:192.168.1.20"
+        );
+        assert_eq!(
+            target_uri("sip:echo@x", "", "pbx", Proto::Udp),
+            "sip:echo@x"
+        );
         assert_eq!(target_uri("*43", "", "pbx", Proto::Udp), "sip:*43@pbx");
     }
 

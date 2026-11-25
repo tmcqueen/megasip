@@ -55,10 +55,18 @@ struct Store {
     log_seq: u64,
 }
 
-static STORE: Mutex<Store> = Mutex::new(Store { sip: VecDeque::new(), logs: VecDeque::new(), sip_seq: 0, log_seq: 0 });
+static STORE: Mutex<Store> = Mutex::new(Store {
+    sip: VecDeque::new(),
+    logs: VecDeque::new(),
+    sip_seq: 0,
+    log_seq: 0,
+});
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn lock() -> std::sync::MutexGuard<'static, Store> {
@@ -77,7 +85,11 @@ pub fn sip(dir: &'static str, transport: &str, remote: SocketAddr, data: &[u8]) 
                 h.map(|v| crate::engine::msg::uri_user(&crate::engine::msg::parse_name_addr(v).uri))
                     .unwrap_or_default()
             };
-            let method = if m.is_request() { m.method().to_string() } else { cm.clone() };
+            let method = if m.is_request() {
+                m.method().to_string()
+            } else {
+                cm.clone()
+            };
             (
                 line,
                 method,
@@ -89,7 +101,16 @@ pub fn sip(dir: &'static str, transport: &str, remote: SocketAddr, data: &[u8]) 
                 m.has_sdp(),
             )
         }
-        None => (text.lines().next().unwrap_or("").to_string(), String::new(), 0, String::new(), String::new(), String::new(), String::new(), false),
+        None => (
+            text.lines().next().unwrap_or("").to_string(),
+            String::new(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            false,
+        ),
     };
     let mut s = lock();
     s.sip_seq += 1;
@@ -118,7 +139,14 @@ pub fn sip(dir: &'static str, transport: &str, remote: SocketAddr, data: &[u8]) 
 pub fn log(level: &str, category: &'static str, target: &str, message: String) {
     let mut s = lock();
     s.log_seq += 1;
-    let rec = LogRecord { seq: s.log_seq, t: now_ms(), level: level.to_string(), category, target: target.to_string(), message };
+    let rec = LogRecord {
+        seq: s.log_seq,
+        t: now_ms(),
+        level: level.to_string(),
+        category,
+        target: target.to_string(),
+        message,
+    };
     s.logs.push_back(rec);
     while s.logs.len() > MAX_LOGS {
         s.logs.pop_front();
@@ -160,6 +188,13 @@ mod tests {
         assert_eq!(r["callId"], "abc");
         assert_eq!(r["toUser"], "1002");
         assert_eq!(r["sdp"], true);
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&sip_since(before + 1)).unwrap().as_array().unwrap().len(), 0);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&sip_since(before + 1))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

@@ -38,7 +38,15 @@ type VenatorHandle = reload::Handle<Option<venator::Venator>, Registry>;
 static VENATOR: OnceLock<VenatorHandle> = OnceLock::new();
 static VENATOR_HOST: Mutex<String> = Mutex::new(String::new());
 
-const AUDIO_TARGETS: &[&str] = &["pulseaudio", "cpal", "alsa", "sonora", "lewton", "ropus", "megasip::media"];
+const AUDIO_TARGETS: &[&str] = &[
+    "pulseaudio",
+    "cpal",
+    "alsa",
+    "sonora",
+    "lewton",
+    "ropus",
+    "megasip::media",
+];
 
 pub fn is_audio(target: &str) -> bool {
     AUDIO_TARGETS
@@ -89,14 +97,20 @@ impl CatFilter {
         let audio = is_audio(meta.target());
         let lvl = level_num(meta.level());
         let max = match self.0 {
-            Sink::SipFile if FILES_ON.load(Ordering::Relaxed) && !audio => SIP_LEVEL.load(Ordering::Relaxed),
-            Sink::AudioFile if FILES_ON.load(Ordering::Relaxed) && audio => AUDIO_LEVEL.load(Ordering::Relaxed),
+            Sink::SipFile if FILES_ON.load(Ordering::Relaxed) && !audio => {
+                SIP_LEVEL.load(Ordering::Relaxed)
+            }
+            Sink::AudioFile if FILES_ON.load(Ordering::Relaxed) && audio => {
+                AUDIO_LEVEL.load(Ordering::Relaxed)
+            }
             // Venator's reconnect failures repeat every 5 s while it isn't running; files only.
             Sink::Stderr if meta.target().starts_with("venator") => 0,
             Sink::Stderr if audio => STDERR_AUDIO.load(Ordering::Relaxed),
             Sink::Stderr => STDERR_SIP.load(Ordering::Relaxed),
             // Venator's own connection messages must not loop back into it.
-            Sink::Venator if VENATOR_ON.load(Ordering::Relaxed) && !meta.target().starts_with("venator") => {
+            Sink::Venator
+                if VENATOR_ON.load(Ordering::Relaxed) && !meta.target().starts_with("venator") =>
+            {
                 if audio {
                     AUDIO_LEVEL.load(Ordering::Relaxed)
                 } else {
@@ -138,7 +152,9 @@ struct FileSink {
 
 impl FileSink {
     const fn new() -> Self {
-        FileSink { file: Mutex::new(None) }
+        FileSink {
+            file: Mutex::new(None),
+        }
     }
 
     /// Close and open again (the file name changed).
@@ -156,10 +172,17 @@ impl FileSink {
                     let _ = std::fs::create_dir_all(dir);
                 }
                 // Keep one previous log; start fresh when it grows past 20 MB.
-                if std::fs::metadata(&p).map(|m| m.len() > 20 * 1024 * 1024).unwrap_or(false) {
+                if std::fs::metadata(&p)
+                    .map(|m| m.len() > 20 * 1024 * 1024)
+                    .unwrap_or(false)
+                {
                     let _ = std::fs::rename(&p, p.with_extension("log.old"));
                 }
-                *g = std::fs::OpenOptions::new().create(true).append(true).open(&p).ok();
+                *g = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&p)
+                    .ok();
             }
             Some(_) => {}
         }
@@ -241,7 +264,11 @@ impl<S: Subscriber> Layer<S> for CaptureLayer {
         if !v.fields.is_empty() {
             msg = format!("{msg} {}", v.fields);
         }
-        let category = if is_audio(meta.target()) { "audio" } else { "sip" };
+        let category = if is_audio(meta.target()) {
+            "audio"
+        } else {
+            "sip"
+        };
         crate::debug::log(meta.level().as_str(), category, meta.target(), msg);
     }
 }
@@ -301,7 +328,8 @@ pub fn apply(s: &Settings) {
     let dir = log_dir();
     let (sip, audio) = file_names();
     let sip_path = (s.log_to_files && parse_level(&s.log_sip_level) > 0).then(|| dir.join(sip));
-    let audio_path = (s.log_to_files && parse_level(&s.log_audio_level) > 0).then(|| dir.join(audio));
+    let audio_path =
+        (s.log_to_files && parse_level(&s.log_audio_level) > 0).then(|| dir.join(audio));
     let renamed = LOG_RENAMED.swap(false, Ordering::Relaxed);
     if renamed {
         SIP_FILE.reopen(sip_path);
@@ -311,7 +339,11 @@ pub fn apply(s: &Settings) {
         AUDIO_FILE.set_open(audio_path);
     }
 
-    let host = if s.venator_host.trim().is_empty() { "127.0.0.1:8362".to_string() } else { s.venator_host.trim().to_string() };
+    let host = if s.venator_host.trim().is_empty() {
+        "127.0.0.1:8362".to_string()
+    } else {
+        s.venator_host.trim().to_string()
+    };
     if let Some(h) = VENATOR.get() {
         let mut cur = VENATOR_HOST.lock().unwrap_or_else(|e| e.into_inner());
         if s.log_to_venator {
@@ -368,9 +400,26 @@ fn file_names() -> (String, String) {
 
 /// A file-name-safe form of the account's short name ("Work Line" -> "Work-Line").
 fn slug(label: &str) -> String {
-    let s: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || "_.@".contains(c) { c } else { '-' }).collect();
-    let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
-    if s.is_empty() { "account".into() } else { s }
+    let s: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "_.@".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let s = s
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if s.is_empty() {
+        "account".into()
+    } else {
+        s
+    }
 }
 
 /// Name the log files after the window's active account (None: the plain names).
@@ -384,7 +433,10 @@ pub fn set_log_name(account: Option<&str>) {
         *n = new;
     }
     LOG_RENAMED.store(true, Ordering::Relaxed);
-    let last = LAST_SETTINGS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let last = LAST_SETTINGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if let Some(s) = last {
         apply(&s);
     }

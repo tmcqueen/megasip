@@ -84,7 +84,9 @@ pub fn save_contacts(c: &[Contact]) {
 
 /// Import contacts from MicroSIP's Contacts.xml or a CSV (name,number).
 pub fn import_contacts(path: &str) -> Vec<Contact> {
-    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     if text.trim_start().starts_with('<') {
         // <contact name="..." number="..." ... />
@@ -115,7 +117,10 @@ pub fn import_contacts(path: &str) -> Vec<Contact> {
         }
     } else {
         for line in text.lines() {
-            let cols: Vec<&str> = line.split([',', ';', '\t']).map(|c| c.trim().trim_matches('"')).collect();
+            let cols: Vec<&str> = line
+                .split([',', ';', '\t'])
+                .map(|c| c.trim().trim_matches('"'))
+                .collect();
             if cols.len() >= 2 && !cols[1].is_empty() && !cols[1].eq_ignore_ascii_case("number") {
                 out.push(Contact {
                     id: crate::engine::msg::random_token(10),
@@ -132,13 +137,21 @@ pub fn import_contacts(path: &str) -> Vec<Contact> {
 pub fn export_contacts_csv(path: &str, c: &[Contact]) -> std::io::Result<()> {
     let mut s = String::from("Name,Number\n");
     for x in c {
-        s.push_str(&format!("\"{}\",\"{}\"\n", x.name.replace('"', "'"), x.number.replace('"', "'")));
+        s.push_str(&format!(
+            "\"{}\",\"{}\"\n",
+            x.name.replace('"', "'"),
+            x.number.replace('"', "'")
+        ));
     }
     std::fs::write(path, s)
 }
 
 fn xml_unescape(s: &str) -> String {
-    s.replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    s.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]

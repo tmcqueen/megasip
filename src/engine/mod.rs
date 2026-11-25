@@ -79,7 +79,10 @@ pub enum Event {
     Accounts(Vec<AccountStatus>),
     Call(CallInfo),
     /// The call is over; `missed` for unanswered incoming calls.
-    Ended { info: CallInfo, missed: bool },
+    Ended {
+        info: CallInfo,
+        missed: bool,
+    },
     Incoming(CallInfo),
     Dtmf(CallId, char),
     Error(String),
@@ -123,13 +126,22 @@ impl Acc {
     }
 
     pub fn contact(&self) -> String {
-        let a = self.contact_addr.map(|a| a.to_string()).unwrap_or_else(|| "0.0.0.0:5060".into());
-        let user = if self.cfg.username.is_empty() { "megasip".to_string() } else { self.cfg.username.clone() };
+        let a = self
+            .contact_addr
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "0.0.0.0:5060".into());
+        let user = if self.cfg.username.is_empty() {
+            "megasip".to_string()
+        } else {
+            self.cfg.username.clone()
+        };
         format!("<sip:{}@{}{}>", user, a, self.proto.uri_param())
     }
 
     pub fn via_host(&self) -> String {
-        self.contact_addr.map(|a| a.to_string()).unwrap_or_else(|| "0.0.0.0:5060".into())
+        self.contact_addr
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "0.0.0.0:5060".into())
     }
 
     pub fn auth_user(&self) -> String {
@@ -177,8 +189,18 @@ pub(crate) struct ServerTxn {
 }
 
 enum Internal {
-    Resolved { acc: String, generation: u64, result: Option<(SocketAddr, Proto)> },
-    Connected { acc: String, generation: u64, result: Result<(transport::BoxStream, SocketAddr), String>, peer: SocketAddr, proto: Proto },
+    Resolved {
+        acc: String,
+        generation: u64,
+        result: Option<(SocketAddr, Proto)>,
+    },
+    Connected {
+        acc: String,
+        generation: u64,
+        result: Result<(transport::BoxStream, SocketAddr), String>,
+        peer: SocketAddr,
+        proto: Proto,
+    },
     SipStun(Option<SocketAddr>),
 }
 
@@ -272,8 +294,14 @@ async fn run(
     // panics to the message that caused them and keep serving.
     fn guarded(what: &str, f: impl FnOnce()) {
         if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
-            let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
-            tracing::error!("internal error while handling {what}: {}", msg.unwrap_or_default());
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
+            tracing::error!(
+                "internal error while handling {what}: {}",
+                msg.unwrap_or_default()
+            );
         }
     }
     loop {
@@ -380,7 +408,11 @@ impl Engine {
             }
         }
         if !self.accs.contains_key("local") {
-            let local = Account { id: "local".into(), label: "Local".into(), ..Default::default() };
+            let local = Account {
+                id: "local".into(),
+                label: "Local".into(),
+                ..Default::default()
+            };
             let mut acc = self.new_acc(local);
             acc.local_only = true;
             acc.proto = Proto::Udp;
@@ -422,7 +454,10 @@ impl Engine {
     /// An account by id, falling back to the built-in local account (an account can be
     /// removed in Settings while one of its calls is still up).
     pub(crate) fn acc(&self, id: &str) -> &Acc {
-        self.accs.get(id).or_else(|| self.accs.get("local")).expect("local account always exists")
+        self.accs
+            .get(id)
+            .or_else(|| self.accs.get("local"))
+            .expect("local account always exists")
     }
 
     /// A copy of an account's settings-relevant fields (for borrow-free use).
@@ -442,10 +477,20 @@ impl Engine {
     }
 
     fn start_resolve(&mut self, id: &str, generation: u64) {
-        let Some(acc) = self.accs.get_mut(id) else { return };
+        let Some(acc) = self.accs.get_mut(id) else {
+            return;
+        };
         acc.state = RegState::Resolving;
-        let target = if acc.cfg.proxy.trim().is_empty() { acc.cfg.server.clone() } else { acc.cfg.proxy.clone() };
-        let target = target.trim().trim_start_matches("sip:").trim_start_matches("sips:").to_string();
+        let target = if acc.cfg.proxy.trim().is_empty() {
+            acc.cfg.server.clone()
+        } else {
+            acc.cfg.proxy.clone()
+        };
+        let target = target
+            .trim()
+            .trim_start_matches("sip:")
+            .trim_start_matches("sips:")
+            .to_string();
         let target = target.split(';').next().unwrap_or("").to_string();
         let want = match acc.cfg.transport.as_str() {
             "udp" => Some(Proto::Udp),
@@ -458,13 +503,21 @@ impl Engine {
         let acc_id = id.to_string();
         tokio::spawn(async move {
             let result = transport::resolve(&target, want, srv).await;
-            let _ = tx.send(Internal::Resolved { acc: acc_id, generation, result });
+            let _ = tx.send(Internal::Resolved {
+                acc: acc_id,
+                generation,
+                result,
+            });
         });
     }
 
     fn internal(&mut self, i: Internal) {
         match i {
-            Internal::Resolved { acc, generation, result } => {
+            Internal::Resolved {
+                acc,
+                generation,
+                result,
+            } => {
                 let Some(a) = self.accs.get(&acc) else { return };
                 if a.generation != generation {
                     return;
@@ -476,7 +529,8 @@ impl Engine {
                         a.retry_at = Some(Instant::now() + Duration::from_secs(30));
                     }
                     Some((dest, Proto::Udp)) => {
-                        let ip = transport::local_ip_for(dest).unwrap_or(IpAddr::from([127, 0, 0, 1]));
+                        let ip =
+                            transport::local_ip_for(dest).unwrap_or(IpAddr::from([127, 0, 0, 1]));
                         let local = SocketAddr::new(ip, self.tr.udp_local.port());
                         let public = self.public_addr_for(&acc, local);
                         let a = self.accs.get_mut(&acc).unwrap();
@@ -487,10 +541,19 @@ impl Engine {
                         self.register(&acc);
                     }
                     Some((dest, proto)) => {
-                        let host = if a.cfg.proxy.trim().is_empty() { a.cfg.server.trim() } else { a.cfg.proxy.trim() };
-                        let name = transport::split_host_port(host.trim_start_matches("sip:").split(';').next().unwrap_or(""))
-                            .0
-                            .to_string();
+                        let host = if a.cfg.proxy.trim().is_empty() {
+                            a.cfg.server.trim()
+                        } else {
+                            a.cfg.proxy.trim()
+                        };
+                        let name = transport::split_host_port(
+                            host.trim_start_matches("sip:")
+                                .split(';')
+                                .next()
+                                .unwrap_or(""),
+                        )
+                        .0
+                        .to_string();
                         let tls = self.tr.tls_config();
                         let tx = self.internal_tx.clone();
                         let a = self.accs.get_mut(&acc).unwrap();
@@ -498,15 +561,32 @@ impl Engine {
                         a.proto = proto;
                         a.state = RegState::Registering;
                         tokio::spawn(async move {
-                            let result = transport::dial(proto, dest, name, tls).await.map_err(|e| e.to_string());
-                            let _ = tx.send(Internal::Connected { acc, generation, result, peer: dest, proto });
+                            let result = transport::dial(proto, dest, name, tls)
+                                .await
+                                .map_err(|e| e.to_string());
+                            let _ = tx.send(Internal::Connected {
+                                acc,
+                                generation,
+                                result,
+                                peer: dest,
+                                proto,
+                            });
                         });
                     }
                 }
                 self.publish_accounts();
             }
-            Internal::Connected { acc, generation, result, peer, proto } => {
-                let ok = self.accs.get(&acc).is_some_and(|a| a.generation == generation);
+            Internal::Connected {
+                acc,
+                generation,
+                result,
+                peer,
+                proto,
+            } => {
+                let ok = self
+                    .accs
+                    .get(&acc)
+                    .is_some_and(|a| a.generation == generation);
                 if !ok {
                     return;
                 }
@@ -588,16 +668,31 @@ impl Engine {
         let mut list = Vec::new();
         for a in self.settings.accounts.iter() {
             let (state, text) = match self.accs.get(&a.id).map(|x| &x.state) {
-                None => ("off".to_string(), if a.enabled { "No server".to_string() } else { "Disabled".to_string() }),
+                None => (
+                    "off".to_string(),
+                    if a.enabled {
+                        "No server".to_string()
+                    } else {
+                        "Disabled".to_string()
+                    },
+                ),
                 Some(RegState::Off) => ("off".into(), "Not registered".into()),
                 Some(RegState::Resolving) => ("registering".into(), "Looking up server…".into()),
                 Some(RegState::Registering) => ("registering".into(), "Registering…".into()),
                 Some(RegState::Registered) => ("registered".into(), "Online".into()),
                 Some(RegState::Error(e)) => ("error".into(), e.clone()),
             };
-            list.push(AccountStatus { id: a.id.clone(), title: a.title(), state, text });
+            list.push(AccountStatus {
+                id: a.id.clone(),
+                title: a.title(),
+                state,
+                text,
+            });
         }
-        let key: Vec<_> = list.iter().map(|s| (s.id.clone(), s.state.clone(), s.text.clone())).collect();
+        let key: Vec<_> = list
+            .iter()
+            .map(|s| (s.id.clone(), s.state.clone(), s.text.clone()))
+            .collect();
         if key != self.last_acc_status {
             self.last_acc_status = key;
             self.emit(Event::Accounts(list));
@@ -613,24 +708,45 @@ impl Engine {
     fn send_register(&mut self, id: &str, expires_override: Option<u32>) {
         let rport = self.settings.rport;
         let ua = self.user_agent.clone();
-        let Some(a) = self.accs.get_mut(id) else { return };
+        let Some(a) = self.accs.get_mut(id) else {
+            return;
+        };
         if a.local_only || !a.ready() {
             return;
         }
         let expires = expires_override.unwrap_or(a.cfg.register_refresh.max(30));
         let domain = a.cfg.sip_domain();
-        let uri = format!("sip:{}{}", domain, if a.proto == Proto::Udp { "" } else { a.proto.uri_param() });
+        let uri = format!(
+            "sip:{}{}",
+            domain,
+            if a.proto == Proto::Udp {
+                ""
+            } else {
+                a.proto.uri_param()
+            }
+        );
         let mut req = SipMsg::request("REGISTER", &uri);
         let branch = new_branch();
         req.add(
             "Via",
-            format!("SIP/2.0/{} {};branch={}{}", a.proto.via_name(), a.via_host(), branch, if rport { ";rport" } else { "" }),
+            format!(
+                "SIP/2.0/{} {};branch={}{}",
+                a.proto.via_name(),
+                a.via_host(),
+                branch,
+                if rport { ";rport" } else { "" }
+            ),
         );
         req.add("Max-Forwards", "70");
         let from = if a.cfg.display_name.trim().is_empty() {
             format!("<{}>;tag={}", a.aor(), a.from_tag)
         } else {
-            format!("{} <{}>;tag={}", msg::quote_display(a.cfg.display_name.trim()), a.aor(), a.from_tag)
+            format!(
+                "{} <{}>;tag={}",
+                msg::quote_display(a.cfg.display_name.trim()),
+                a.aor(),
+                a.from_tag
+            )
         };
         req.add("From", from);
         req.add("To", format!("<{}>", a.aor()));
@@ -647,7 +763,14 @@ impl Engine {
         if let Some((ch, proxy)) = a.challenge.clone() {
             a.nc += 1;
             if let Some(h) = digest(&ch, &a.auth_user(), &a.cfg.password, "REGISTER", &uri, a.nc) {
-                req.add(if proxy { "Proxy-Authorization" } else { "Authorization" }, h);
+                req.add(
+                    if proxy {
+                        "Proxy-Authorization"
+                    } else {
+                        "Authorization"
+                    },
+                    h,
+                );
             }
         }
         if expires_override == Some(0) {
@@ -664,7 +787,10 @@ impl Engine {
     }
 
     fn unregister(&mut self, id: &str) {
-        let registered = self.accs.get(id).is_some_and(|a| a.state == RegState::Registered);
+        let registered = self
+            .accs
+            .get(id)
+            .is_some_and(|a| a.state == RegState::Registered);
         if registered {
             self.send_register(id, Some(0));
         }
@@ -681,7 +807,9 @@ impl Engine {
         if code < 200 {
             return;
         }
-        let Some(a) = self.accs.get_mut(id) else { return };
+        let Some(a) = self.accs.get_mut(id) else {
+            return;
+        };
         a.register_txn = None;
         let unreg = req.header("Expires") == Some("0");
         match code {
@@ -706,15 +834,25 @@ impl Engine {
                     .or_else(|| resp.header("Expires").and_then(|v| v.trim().parse().ok()))
                     .unwrap_or(a.cfg.register_refresh.max(30));
                 // NAT: the server tells us how it sees us (rport/received).
-                if a.cfg.allow_rewrite && a.proto == Proto::Udp && a.cfg.public_addr.trim().is_empty() {
+                if a.cfg.allow_rewrite
+                    && a.proto == Proto::Udp
+                    && a.cfg.public_addr.trim().is_empty()
+                {
                     if let Some(via) = resp.header("Via") {
                         let recv = param(via, "received").and_then(|v| v.parse::<IpAddr>().ok());
                         let rport = param(via, "rport").and_then(|v| v.parse::<u16>().ok());
-                        if let (Some(cur), Some(ip)) = (a.contact_addr, recv.or(Some(a.contact_addr.unwrap().ip()))) {
+                        if let (Some(cur), Some(ip)) =
+                            (a.contact_addr, recv.or(Some(a.contact_addr.unwrap().ip())))
+                        {
                             let port = rport.unwrap_or(cur.port());
                             let seen = SocketAddr::new(ip, port);
                             if seen != cur && recv.is_some() {
-                                tracing::info!("account {}: NAT detected, contact {} -> {}", a.cfg.title(), cur, seen);
+                                tracing::info!(
+                                    "account {}: NAT detected, contact {} -> {}",
+                                    a.cfg.title(),
+                                    cur,
+                                    seen
+                                );
                                 // Remove the old binding, then register the public one.
                                 a.contact_addr = Some(seen);
                                 let id2 = id.to_string();
@@ -725,11 +863,19 @@ impl Engine {
                     }
                 }
                 a.state = RegState::Registered;
-                let secs = if granted > 60 { granted as u64 * 85 / 100 } else { (granted as u64).saturating_sub(5).max(5) };
+                let secs = if granted > 60 {
+                    granted as u64 * 85 / 100
+                } else {
+                    (granted as u64).saturating_sub(5).max(5)
+                };
                 a.refresh_at = Some(Instant::now() + Duration::from_secs(secs));
             }
             401 | 407 => {
-                let hdr = if code == 401 { resp.header("WWW-Authenticate") } else { resp.header("Proxy-Authenticate") };
+                let hdr = if code == 401 {
+                    resp.header("WWW-Authenticate")
+                } else {
+                    resp.header("Proxy-Authenticate")
+                };
                 let ch = hdr.and_then(|h| DigestChallenge::parse(h).ok());
                 let stale = hdr.is_some_and(|h| h.to_ascii_lowercase().contains("stale=true"));
                 if let Some(ch) = ch {
@@ -748,7 +894,10 @@ impl Engine {
                 a.auth_tries = 0;
             }
             423 => {
-                let min = resp.header("Min-Expires").and_then(|v| v.trim().parse().ok()).unwrap_or(3600);
+                let min = resp
+                    .header("Min-Expires")
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(3600);
                 a.cfg.register_refresh = min;
                 let id2 = id.to_string();
                 self.send_register(&id2, None);
@@ -759,7 +908,9 @@ impl Engine {
                     a.state = RegState::Off;
                 } else {
                     a.state = RegState::Error(format!("{} {}", code, resp.reason()));
-                    a.retry_at = Some(Instant::now() + Duration::from_secs(if code == 408 { 20 } else { 60 }));
+                    a.retry_at = Some(
+                        Instant::now() + Duration::from_secs(if code == 408 { 20 } else { 60 }),
+                    );
                 }
             }
         }
@@ -769,7 +920,14 @@ impl Engine {
     // ---------------------------------------------------------------- transactions
 
     /// Send a request in a new client transaction.
-    pub(crate) fn send_request(&mut self, req: SipMsg, branch: String, flow: Flow, dest: SocketAddr, owner: TxnOwner) {
+    pub(crate) fn send_request(
+        &mut self,
+        req: SipMsg,
+        branch: String,
+        flow: Flow,
+        dest: SocketAddr,
+        owner: TxnOwner,
+    ) {
         let bytes = req.to_bytes();
         self.tr.send(flow, dest, &bytes);
         if req.method() == "ACK" {
@@ -856,7 +1014,11 @@ impl Engine {
                     return;
                 };
                 if tracing::enabled!(tracing::Level::DEBUG) {
-                    tracing::debug!("RECV {:?} <- {from}\n{}", flow, String::from_utf8_lossy(&data));
+                    tracing::debug!(
+                        "RECV {:?} <- {from}\n{}",
+                        flow,
+                        String::from_utf8_lossy(&data)
+                    );
                 }
                 if m.is_request() {
                     self.on_request(m, flow, from);
@@ -899,10 +1061,13 @@ impl Engine {
         }
         let txn = self.ctx.remove(&branch).unwrap();
         // Digest challenge for anything but REGISTER (handled with account state).
-        if (code == 401 || code == 407) && !matches!(txn.owner, TxnOwner::Register(_)) && txn.auth_tries < 2
-            && self.retry_with_auth(&txn, &resp) {
-                return;
-            }
+        if (code == 401 || code == 407)
+            && !matches!(txn.owner, TxnOwner::Register(_))
+            && txn.auth_tries < 2
+            && self.retry_with_auth(&txn, &resp)
+        {
+            return;
+        }
         match txn.owner.clone() {
             TxnOwner::Register(id) => self.on_register_response(&id, &txn.req, &resp),
             TxnOwner::Call(id) => self.call_response(id, &txn.req, &resp),
@@ -918,10 +1083,18 @@ impl Engine {
             },
             _ => return false,
         };
-        let Some(acc) = self.accs.get_mut(&acc_id) else { return false };
+        let Some(acc) = self.accs.get_mut(&acc_id) else {
+            return false;
+        };
         let proxy = resp.code() == 407;
-        let hdr = if proxy { resp.header("Proxy-Authenticate") } else { resp.header("WWW-Authenticate") };
-        let Some(ch) = hdr.and_then(|h| DigestChallenge::parse(h).ok()) else { return false };
+        let hdr = if proxy {
+            resp.header("Proxy-Authenticate")
+        } else {
+            resp.header("WWW-Authenticate")
+        };
+        let Some(ch) = hdr.and_then(|h| DigestChallenge::parse(h).ok()) else {
+            return false;
+        };
         let user = acc.auth_user();
         let pass = acc.cfg.password.clone();
         acc.challenge = Some((ch.clone(), proxy));
@@ -929,7 +1102,9 @@ impl Engine {
         let mut req = txn.req.clone();
         let method = req.method().to_string();
         let uri = req.uri().to_string();
-        let Some(h) = digest(&ch, &user, &pass, &method, &uri, 1) else { return false };
+        let Some(h) = digest(&ch, &user, &pass, &method, &uri, 1) else {
+            return false;
+        };
         // ACK the challenge first for INVITE.
         if method == "INVITE" {
             let ack = call::ack_for_failure(&txn.req, resp);
@@ -937,7 +1112,14 @@ impl Engine {
         }
         req.remove("Authorization");
         req.remove("Proxy-Authorization");
-        req.add(if proxy { "Proxy-Authorization" } else { "Authorization" }, h);
+        req.add(
+            if proxy {
+                "Proxy-Authorization"
+            } else {
+                "Authorization"
+            },
+            h,
+        );
         let branch = new_branch();
         // New Via branch and CSeq.
         let via = req.header("Via").unwrap_or("").to_string();
@@ -1016,7 +1198,9 @@ impl Engine {
             }
             "INVITE" => self.on_invite(req, flow, from),
             "CANCEL" => self.on_cancel(req, flow, from),
-            "BYE" | "INFO" | "NOTIFY" | "REFER" | "UPDATE" | "PRACK" => self.in_dialog_request(req, flow, from),
+            "BYE" | "INFO" | "NOTIFY" | "REFER" | "UPDATE" | "PRACK" => {
+                self.in_dialog_request(req, flow, from)
+            }
             "OPTIONS" => {
                 if req.to_tag().is_some() {
                     self.in_dialog_request(req, flow, from);
@@ -1053,7 +1237,11 @@ impl Engine {
             }
             if !t.reliable && now >= t.next_retx {
                 self.tr.send(t.flow, t.dest, &t.bytes);
-                let cap = if t.req.method() == "INVITE" { Duration::from_secs(3600) } else { T2 };
+                let cap = if t.req.method() == "INVITE" {
+                    Duration::from_secs(3600)
+                } else {
+                    T2
+                };
                 t.interval = (t.interval * 2).min(cap);
                 t.next_retx = now + t.interval;
             }
@@ -1094,7 +1282,9 @@ impl Engine {
                 let a = self.accs.get_mut(&id).unwrap();
                 a.retry_at = None;
                 a.challenge = None;
-                if a.ready() && a.flow == Flow::Udp || matches!(a.flow, Flow::Stream(s) if self.tr.is_open(s)) {
+                if a.ready() && a.flow == Flow::Udp
+                    || matches!(a.flow, Flow::Stream(s) if self.tr.is_open(s))
+                {
                     self.register(&id);
                 } else {
                     let g: u64 = rand::random();
@@ -1112,7 +1302,10 @@ impl Engine {
                 }
             }
         }
-        if self.stun_server.is_some() && now - self.stun_at > Duration::from_secs(if self.public_ip.is_some() { 300 } else { 10 }) {
+        if self.stun_server.is_some()
+            && now - self.stun_at
+                > Duration::from_secs(if self.public_ip.is_some() { 300 } else { 10 })
+        {
             self.send_stun();
         }
         self.call_tick(now);
@@ -1139,7 +1332,14 @@ impl Engine {
     }
 }
 
-pub(crate) fn digest(ch: &DigestChallenge, user: &str, pass: &str, method: &str, uri: &str, nc: u32) -> Option<String> {
+pub(crate) fn digest(
+    ch: &DigestChallenge,
+    user: &str,
+    pass: &str,
+    method: &str,
+    uri: &str,
+    nc: u32,
+) -> Option<String> {
     let creds = DigestCredentials::new(user, pass);
     DigestResponse::from_challenge(ch, &creds, method, uri, None, Some(nc.max(1)))
         .ok()
@@ -1168,15 +1368,28 @@ fn response_dest(req: &SipMsg, flow: Flow, from: SocketAddr) -> SocketAddr {
     if flow != Flow::Udp {
         return from;
     }
-    let Some(via) = req.header("Via") else { return from };
+    let Some(via) = req.header("Via") else {
+        return from;
+    };
     if param(via, "rport").is_some() || via.contains(";rport") {
         return from;
     }
     // Otherwise sent-by host:port, falling back to the source.
-    let sent_by = via.split_whitespace().nth(1).unwrap_or("").split(';').next().unwrap_or("");
+    let sent_by = via
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("");
     let (h, p) = transport::split_host_port(sent_by);
     match h.parse::<IpAddr>() {
-        Ok(ip) => SocketAddr::new(param(via, "received").and_then(|r| r.parse().ok()).unwrap_or(ip), p.unwrap_or(5060)),
+        Ok(ip) => SocketAddr::new(
+            param(via, "received")
+                .and_then(|r| r.parse().ok())
+                .unwrap_or(ip),
+            p.unwrap_or(5060),
+        ),
         Err(_) => from,
     }
 }

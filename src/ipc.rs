@@ -11,7 +11,9 @@ use std::sync::Mutex;
 static RX: Mutex<Option<Receiver<String>>> = Mutex::new(None);
 
 pub fn path_for(pid: u32) -> PathBuf {
-    let dir = std::env::var("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+    let dir = std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
     dir.join(format!("megasip-{pid}.sock"))
 }
 
@@ -32,7 +34,9 @@ pub fn send_self(line: &str) -> bool {
 pub fn listen() {
     let p = path_for(std::process::id());
     let _ = std::fs::remove_file(&p);
-    let Ok(l) = UnixListener::bind(&p) else { return };
+    let Ok(l) = UnixListener::bind(&p) else {
+        return;
+    };
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
@@ -65,6 +69,8 @@ pub fn cleanup() {
 mod tests {
     #[test]
     fn path_is_per_pid() {
-        assert!(super::path_for(42).to_string_lossy().ends_with("megasip-42.sock"));
+        assert!(super::path_for(42)
+            .to_string_lossy()
+            .ends_with("megasip-42.sock"));
     }
 }

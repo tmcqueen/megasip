@@ -21,6 +21,32 @@ Status: proposal, nothing built yet. Written 2026-11-25 against `main` at `725b7
   A cheaper option (Option A below, 2 to 3 weeks) makes the existing Qt app behave
   properly on GNOME without looking native.
 
+## Decisions (2026-11-25)
+
+- **Option A.** The Qt app is made to work on GNOME. There will be no GTK/libadwaita
+  frontend. The GTK sections below stay for the record.
+- **Packages are `.deb` and `.rpm` only.** No Flatpak or Snap, so risk 5 (PID namespaces)
+  does not apply. The reasons are in the README under "Packaging".
+
+### Ubuntu GNOME vs Fedora's vanilla GNOME
+
+Both run the same GNOME Shell and Mutter, so window raising, notifications, always-on-top,
+PipeWire audio and GNOME Keyring behave the same. Where they differ:
+
+- **Tray:** Ubuntu enables its AppIndicator extension by default, so the existing Qt tray
+  icon (StatusNotifierItem) should just appear. Fedora has no tray unless the user installs
+  `gnome-shell-extension-appindicator`. MegaSIP needs to detect a missing
+  `org.kde.StatusNotifierWatcher` and not hide into a tray that isn't there.
+- **Dock:** Ubuntu has a permanent dock that can show a badge count (a possible missed-call
+  count). Fedora only has the dash in the overview. Cosmetic.
+- **Build dependencies:** the KDE Frameworks 6 packages exist on Fedora 40+ and Debian 13,
+  and on Ubuntu from 24.10; Ubuntu 24.04 LTS does not have them. On either distro the
+  `org.kde.desktop` style needs `qqc2-desktop-style` installed, or Qt falls back to a
+  plainer style.
+- **Notifications** (correction to risk 3 for Option A): off Plasma, KNotification falls back
+  to `org.freedesktop.Notifications`, which delivers action clicks to the process that sent
+  the notification. So Answer/Decline may already work per window on GNOME. Untested.
+
 ## What is toolkit-independent today
 
 | Module | Lines | Qt/KDE? | Notes |

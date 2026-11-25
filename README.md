@@ -43,6 +43,33 @@ megasip
 `install.sh` also installs the desktop entry, icon and notification config, and
 registers MegaSIP for `sip:`/`tel:` links where no other app handles them.
 
+### Packaging: .deb and .rpm only, no Flatpak or Snap
+
+MegaSIP will be packaged as `.deb` (Debian, Ubuntu) and `.rpm` (Fedora), not as a Flatpak
+or Snap. The reasons:
+
+- **One account per window depends on process IDs.** Each window is its own process. The
+  account locks in `megasip.db` and the IPC sockets (`megasip-<pid>.sock`) tell windows
+  apart by PID, and spot a crashed window by checking `/proc/<pid>`. Flatpak starts every
+  launch in its own PID namespace, so two windows could both be PID 2 and could not see
+  each other in `/proc`. Locks would go wrong without any error. Fixing that means
+  replacing PIDs with instance ids and file locks throughout, for no gain on a native
+  install.
+- **A sandbox changes how the desktop features work.** Passwords, the tray, notifications,
+  autostart, file dialogs and `sip:`/`tel:` links would each go through a portal or a
+  sandbox permission instead of the plain freedesktop D-Bus services MegaSIP uses now. Each
+  of those is behaviour to re-test on both Plasma and GNOME, and a softphone that misses a
+  ring because of a permission is worse than one that is harder to install.
+- **Native packages use the system's Qt and KDE Frameworks.** That is what gives MegaSIP
+  the Plasma style and theme. A Flatpak would bring its own KDE runtime, and a Snap would
+  need KDE content snaps; both are large downloads for a small app.
+- **The target distributions already ship everything needed.** Fedora has had KDE
+  Frameworks 6 since Fedora 40. Debian 13 and recent Ubuntu releases have it too; Ubuntu
+  24.04 LTS does not, so MegaSIP needs a newer Ubuntu.
+
+If MegaSIP is ever meant for a wider audience, Flatpak is the route to revisit, starting
+with the PID change above.
+
 ## Use
 
 | | |

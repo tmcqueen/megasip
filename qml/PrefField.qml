@@ -4,6 +4,8 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 // A bold label above a control, with an optional hint underneath.
+// Top-aligned so that, in a multi-column GridLayout, labels and controls in
+// the same row line up even when only some cells have a hint below them.
 ColumnLayout {
     id: f
     property string label
@@ -11,6 +13,7 @@ ColumnLayout {
     default property alias content: holder.data
 
     Layout.fillWidth: true
+    Layout.alignment: Qt.AlignTop
     spacing: Kirigami.Units.smallSpacing / 2
 
     QQC2.Label {

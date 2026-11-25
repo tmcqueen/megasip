@@ -53,14 +53,22 @@ QQC2.ApplicationWindow {
         raise()
         requestActivate()
     }
+    // What the draft started from, so saving merges with other windows' changes.
+    property string base: "{}"
     function reload() {
-        draft = JSON.parse(phone.settingsJson || "{}")
+        base = phone.settingsJson || "{}"
+        draft = JSON.parse(base)
         if (!draft.accounts) draft.accounts = []
         const d = draft.accounts.findIndex(a => a.id === draft.defaultAccount)
         if (selAcc < 0 || selAcc >= draft.accounts.length) selAcc = Math.max(0, d)
         dirty = false
         saveError = ""
         version++
+    }
+    // Another window (or this one's tray toggles) saved: keep an untouched draft current.
+    Connections {
+        target: win.phone
+        function onSettingsJsonChanged() { if (win.visible && !win.dirty) win.reload() }
     }
     function set(key, value) {
         if (draft[key] === value) return
@@ -79,7 +87,7 @@ QQC2.ApplicationWindow {
             a.server = (a.server || "").trim()
             a.username = (a.username || "").trim()
         }
-        const err = phone.saveSettings(JSON.stringify(draft))
+        const err = phone.saveSettings(win.base, JSON.stringify(draft))
         if (err) { saveError = err; return false }
         dirty = false
         reload()
@@ -506,9 +514,19 @@ QQC2.ApplicationWindow {
                     QQC2.Label { text: "Microphone" }
                     QQC2.ComboBox { wheelEnabled: false;
                         Layout.fillWidth: true
+                        enabled: win.phone.sourceLabel === ""
                         model: ["System default"].concat(win.devices.inputs)
                         currentIndex: win.devIndex(win.devices.inputs, win.draft.microphoneDevice || "")
                         onActivated: i => win.set("microphoneDevice", i === 0 ? "" : win.devices.inputs[i - 1])
+                    }
+                    Item { visible: win.phone.sourceLabel !== ""; Layout.preferredHeight: 1 }
+                    QQC2.Label {
+                        visible: win.phone.sourceLabel !== ""
+                        Layout.fillWidth: true
+                        text: "Using " + win.phone.sourceLabel + " from the command line"
+                        font: Kirigami.Theme.smallFont
+                        color: Kirigami.Theme.neutralTextColor
+                        wrapMode: Text.Wrap
                     }
                     QQC2.Label { text: "Ring on" }
                     QQC2.ComboBox { wheelEnabled: false;

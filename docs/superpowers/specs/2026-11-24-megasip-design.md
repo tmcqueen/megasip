@@ -47,7 +47,9 @@ QML (Kirigami) ⇄ bridge.rs (QObject "Phone", JSON props)  ⇄  engine (tokio t
                                                                └─ media (RTP/SRTP, codecs,
                                                                    jitter, mixer, cpal I/O)
 config.rs  ~/.config/megasip/settings.json   (settings + accounts)
-store.rs   ~/.local/share/megasip/{history,contacts}.json
+store.rs   ~/.local/share/megasip/contacts.json
+db.rs      ~/.local/share/megasip/megasip.db      (call history; running windows and their
+                                                   account locks; see 2026-11-25 design)
 ```
 
 ## Settings view

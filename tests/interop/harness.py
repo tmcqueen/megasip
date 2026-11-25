@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Drive several `megasip --cli` instances against a local Asterisk and check behaviour."""
-import json, os, queue, subprocess, sys, threading, time
+import json, os, queue, sqlite3, subprocess, sys, threading, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.environ.get("MEGASIP_BIN", os.path.join(HERE, "../../target/debug/megasip"))
@@ -13,10 +13,10 @@ class Phone:
     def __init__(self, name):
         self.name = name
         env = dict(os.environ, MEGASIP_CONFIG_DIR=f"{T}/{name}", MEGASIP_DATA_DIR=f"{T}/{name}",
-                   MEGASIP_INSTANCE=name, MEGASIP_NULL_AUDIO="1",
-                   MEGASIP_TEST_TONE_HZ=str({"alice": 500, "bob": 700, "carol": 900, "dave": 1100}[name]),
-                   MEGASIP_LOG=os.environ.get("MEGASIP_LOG", "info"))
-        self.p = subprocess.Popen([BIN, "--cli"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                   MEGASIP_NULL_AUDIO="1", MEGASIP_LOG=os.environ.get("MEGASIP_LOG", "info"))
+        tone = {"alice": 500, "bob": 700, "carol": 900, "dave": 1100}[name]
+        self.p = subprocess.Popen([BIN, "--cli", "-a", name, "--source", f"tone:{tone}"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=open(f"{T}/{name}/err.log", "w"), text=True, env=env, bufsize=1)
         self.q = queue.Queue()
         self.events = []
@@ -129,6 +129,11 @@ def t_basic_call_and_audio():
     e = a.wait_ended()
     assert e["call"]["reason"] == "Remote hung up", e
     b.wait_ended()
+    # Each phone keeps call history for its own account in megasip.db.
+    time.sleep(0.3)
+    with sqlite3.connect(f"{T}/alice/megasip.db") as db:
+        rows = db.execute("SELECT number, kind FROM call_history WHERE time >= ?", (int(time.time()) - 120,)).fetchall()
+    assert ("1002", "out") in rows, rows
 
 
 def t_reject():

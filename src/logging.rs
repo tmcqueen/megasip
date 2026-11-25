@@ -141,6 +141,12 @@ impl FileSink {
         FileSink { file: Mutex::new(None) }
     }
 
+    /// Close and open again (the file name changed).
+    fn reopen(&self, path: Option<PathBuf>) {
+        *self.file.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.set_open(path);
+    }
+
     fn set_open(&self, path: Option<PathBuf>) {
         let mut g = self.file.lock().unwrap_or_else(|e| e.into_inner());
         match path {
@@ -288,12 +294,22 @@ pub fn init(settings: &Settings) {
 
 /// Apply the logging part of the settings (levels, files, Venator).
 pub fn apply(s: &Settings) {
+    *LAST_SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
     SIP_LEVEL.store(parse_level(&s.log_sip_level), Ordering::Relaxed);
     AUDIO_LEVEL.store(parse_level(&s.log_audio_level), Ordering::Relaxed);
     FILES_ON.store(s.log_to_files, Ordering::Relaxed);
     let dir = log_dir();
-    SIP_FILE.set_open((s.log_to_files && parse_level(&s.log_sip_level) > 0).then(|| dir.join("sip.log")));
-    AUDIO_FILE.set_open((s.log_to_files && parse_level(&s.log_audio_level) > 0).then(|| dir.join("audio.log")));
+    let (sip, audio) = file_names();
+    let sip_path = (s.log_to_files && parse_level(&s.log_sip_level) > 0).then(|| dir.join(sip));
+    let audio_path = (s.log_to_files && parse_level(&s.log_audio_level) > 0).then(|| dir.join(audio));
+    let renamed = LOG_RENAMED.swap(false, Ordering::Relaxed);
+    if renamed {
+        SIP_FILE.reopen(sip_path);
+        AUDIO_FILE.reopen(audio_path);
+    } else {
+        SIP_FILE.set_open(sip_path);
+        AUDIO_FILE.set_open(audio_path);
+    }
 
     let host = if s.venator_host.trim().is_empty() { "127.0.0.1:8362".to_string() } else { s.venator_host.trim().to_string() };
     if let Some(h) = VENATOR.get() {
@@ -333,5 +349,53 @@ mod tests {
         assert!(!is_audio("pulseaudiox"));
         assert_eq!(parse_level("Debug"), 4);
         assert_eq!(parse_level("off"), 0);
+    }
+}
+
+/// Log file name suffix: a window with an active account logs to sip-<account>.log.
+static LOG_NAME: Mutex<String> = Mutex::new(String::new());
+static LOG_RENAMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LAST_SETTINGS: Mutex<Option<Settings>> = Mutex::new(None);
+
+fn file_names() -> (String, String) {
+    let n = LOG_NAME.lock().unwrap_or_else(|e| e.into_inner());
+    if n.is_empty() {
+        ("sip.log".into(), "audio.log".into())
+    } else {
+        (format!("sip-{n}.log"), format!("audio-{n}.log"))
+    }
+}
+
+/// "Work Line" -> "work-line".
+fn slug(label: &str) -> String {
+    let s: String = label.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    if s.is_empty() { "account".into() } else { s }
+}
+
+/// Name the log files after the window's active account (None: the plain names).
+pub fn set_log_name(account: Option<&str>) {
+    let new = account.map(slug).unwrap_or_default();
+    {
+        let mut n = LOG_NAME.lock().unwrap_or_else(|e| e.into_inner());
+        if *n == new {
+            return;
+        }
+        *n = new;
+    }
+    LOG_RENAMED.store(true, Ordering::Relaxed);
+    let last = LAST_SETTINGS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(s) = last {
+        apply(&s);
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    #[test]
+    fn slugs() {
+        assert_eq!(super::slug("Work Line"), "work-line");
+        assert_eq!(super::slug("alice@ex.com"), "alice-ex-com");
+        assert_eq!(super::slug("  "), "account");
     }
 }

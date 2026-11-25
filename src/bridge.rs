@@ -25,6 +25,11 @@ pub mod qobject {
         #[qproperty(bool, dnd)]
         #[qproperty(bool, auto_answer)]
         #[qproperty(i32, missed_count)]
+        /// Id of this window's active account ("" when none).
+        #[qproperty(QString, active_account)]
+        /// What `--source` sends instead of the microphone ("" when it's the microphone).
+        #[qproperty(QString, source_label)]
+        #[qproperty(QString, source_detail)]
         type Phone = super::PhoneRust;
 
         #[qinvokable]
@@ -56,7 +61,8 @@ pub mod qobject {
         #[qinvokable]
         fn set_auto_answer_on(self: Pin<&mut Phone>, on: bool);
         #[qinvokable]
-        fn save_settings(self: Pin<&mut Phone>, json: &QString) -> QString;
+        /// Save the Preferences draft `json`, which was started from `base` (both JSON).
+        fn save_settings(self: Pin<&mut Phone>, base: &QString, json: &QString) -> QString;
         #[qinvokable]
         fn new_account_json(self: &Phone) -> QString;
         #[qinvokable]
@@ -101,6 +107,14 @@ pub mod qobject {
         fn save_text(self: &Phone, path: &QString, text: &QString) -> bool;
         #[qinvokable]
         fn quit(self: Pin<&mut Phone>);
+        /// JSON array of account ids active in *other* windows.
+        #[qinvokable]
+        fn accounts_in_use(self: &Phone) -> QString;
+        /// Tray pick: activate here when idle, else open it in a new window.
+        #[qinvokable]
+        fn pick_account(self: Pin<&mut Phone>, id: &QString);
+        #[qinvokable]
+        fn deactivate_account(self: Pin<&mut Phone>);
 
         #[qsignal]
         fn incoming_call(self: Pin<&mut Phone>, id: i64, name: QString, number: QString);
@@ -143,7 +157,15 @@ pub struct PhoneRust {
     dnd: bool,
     auto_answer: bool,
     missed_count: i32,
+    active_account: QString,
+    source_label: QString,
+    source_detail: QString,
 
+    db: Option<rusqlite::Connection>,
+    /// The account this window has active (the lock in `db` is ours).
+    active: Option<String>,
+    /// `megasip -a foo 1234`: dial once foo is registered.
+    pending_dial: Option<String>,
     cmd: Option<UnboundedSender<Command>>,
     hub: Option<Arc<AudioHub>>,
     settings: Settings,
@@ -196,18 +218,35 @@ impl PhoneRust {
 impl cxx_qt::Initialize for qobject::Phone {
     fn initialize(mut self: Pin<&mut Self>) {
         let settings = Settings::load();
-        let history = store::load_history();
         let contacts = store::load_contacts();
         let hub = AudioHub::start();
+        if let Some(src) = crate::SOURCE.get() {
+            hub.set_source(Some(src.clone()));
+            self.as_mut().set_source_label(qs(&src.label()));
+            self.as_mut().set_source_detail(qs(&src.detail()));
+        }
+        let db = match crate::db::open() {
+            Ok(c) => {
+                if let Err(e) = crate::db::register_self(&c) {
+                    tracing::warn!("couldn't list this window in megasip.db: {e}");
+                }
+                Some(c)
+            }
+            Err(e) => {
+                let msg = format!("Can't open megasip.db ({e}): accounts can't be activated and call history isn't saved");
+                let _ = self.qt_thread().queue(move |mut p| p.as_mut().error_message(QString::from(&msg)));
+                None
+            }
+        };
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
-        let cmd = engine::spawn(settings.clone(), hub.clone(), ev_tx);
+        let cmd = engine::spawn(settings.for_engine(None), hub.clone(), ev_tx);
         {
             let mut r = self.as_mut().rust_mut();
             r.cmd = Some(cmd);
             r.hub = Some(hub);
-            r.history = history;
             r.contacts = contacts;
             r.settings = settings;
+            r.db = db;
         }
         let dnd = self.rust().settings.dnd;
         let aa = self.rust().settings.auto_answer != "off";
@@ -218,6 +257,39 @@ impl cxx_qt::Initialize for qobject::Phone {
         self.as_mut().publish_contacts();
         self.as_mut().publish_calls();
         self.as_mut().refresh_devices();
+
+        self.as_mut().update_status();
+        // Activate once QML is listening, so a lost race ("already active") is shown.
+        let start_account = crate::START_ACCOUNT.get().cloned();
+        let start_dial = crate::START_DIAL.get().cloned();
+        let _ = self.qt_thread().queue(move |mut p| p.as_mut().start_up(start_account, start_dial));
+        if let Some(e) = crate::START_ERROR.get() {
+            let e = e.clone();
+            let _ = self.qt_thread().queue(move |mut p| p.as_mut().error_message(QString::from(&e)));
+        }
+        // Settings and contacts saved by other windows.
+        {
+            let qt = self.qt_thread();
+            std::thread::Builder::new()
+                .name("megasip-watch".into())
+                .spawn(move || {
+                    let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+                    let paths = || (Settings::path(), crate::config::data_dir().join("contacts.json"));
+                    let (sp, cp) = paths();
+                    let (mut s0, mut c0) = (mtime(sp), mtime(cp));
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let (sp, cp) = paths();
+                        let (s1, c1) = (mtime(sp), mtime(cp));
+                        let (sc, cc) = (s1 != s0, c1 != c0);
+                        (s0, c0) = (s1, c1);
+                        if (sc || cc) && qt.queue(move |p| p.reload_external(sc, cc)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .expect("watch thread");
+        }
 
         // A wallet problem at startup (locked, missing) shows up in the window.
         let secret_error = self.rust().settings.secret_error.clone();
@@ -258,22 +330,18 @@ impl qobject::Phone {
     fn on_event(mut self: Pin<&mut Self>, ev: Event) {
         match ev {
             Event::Accounts(list) => {
-                let online = list.iter().filter(|a| a.state == "registered").count();
-                let status = if list.is_empty() {
-                    "No account — open Settings to add one".to_string()
-                } else if online == list.len() {
-                    if list.len() == 1 { "Online".to_string() } else { format!("{online} accounts online") }
-                } else if let Some(e) = list.iter().find(|a| a.state == "error") {
-                    format!("{}: {}", e.title, e.text)
-                } else if let Some(r) = list.iter().find(|a| a.state == "registering") {
-                    format!("{}: {}", r.title, r.text)
-                } else {
-                    format!("{online} of {} online", list.len())
-                };
                 let json = serde_json::to_string(&list).unwrap_or_default();
+                let registered = self
+                    .rust()
+                    .active
+                    .as_ref()
+                    .is_some_and(|id| list.iter().any(|a| &a.id == id && a.state == "registered"));
                 self.as_mut().rust_mut().accounts = list;
                 self.as_mut().set_accounts_json(qs(&json));
-                self.as_mut().set_status_text(qs(&status));
+                self.as_mut().update_status();
+                if registered {
+                    self.as_mut().flush_pending_dial();
+                }
             }
             Event::Call(mut info) => {
                 if info.name.is_empty() {
@@ -305,31 +373,14 @@ impl qobject::Phone {
                     }
                 }
                 self.as_mut().rust_mut().calls.remove(&info.id);
-                let now = chrono::Utc::now().timestamp();
-                let duration = info.connected_at.map(|t| (now - t).max(0)).unwrap_or(0);
-                let kind = if missed {
-                    "missed"
-                } else if info.direction == "in" {
-                    "in"
-                } else {
-                    "out"
-                };
-                let entry = HistoryEntry {
-                    id: crate::engine::msg::random_token(10),
-                    number: info.number.clone(),
-                    name: info.name.clone(),
-                    account_id: info.account_id.clone(),
-                    kind: kind.into(),
-                    time: info.started,
-                    duration,
-                    reason: info.reason.clone(),
-                };
-                {
-                    let mut r = self.as_mut().rust_mut();
-                    r.history.push(entry);
-                    let start = r.history.len().saturating_sub(1000);
-                    r.history.drain(..start);
-                    store::save_history(&r.history);
+                // History belongs to the account; calls on the local identity aren't kept.
+                if self.rust().active.as_deref() == Some(info.account_id.as_str()) {
+                    let entry = store::history_entry(&info, missed);
+                    let saved = self.rust().db.as_ref().map(|c| crate::db::add_history(c, &entry));
+                    if let Some(Err(e)) = saved {
+                        self.as_mut().error_message(qs(&format!("Couldn't save call history: {e}")));
+                    }
+                    self.as_mut().load_history();
                 }
                 if missed {
                     let n = self.rust().missed_count + 1;
@@ -362,7 +413,7 @@ impl qobject::Phone {
             let t = target.trim().trim_start_matches("callto:").trim_start_matches("tel:").to_string();
             let t = if target.trim().starts_with("tel:") { t } else { target.trim().trim_start_matches("callto:").to_string() };
             self.as_mut().activate_requested();
-            let acc = self.rust().settings.default_account.clone();
+            let acc = self.rust().active.clone().unwrap_or_default();
             self.as_mut().do_dial(&t, &acc);
         } else if line == "answer" {
             if let Some(id) = self.rust().calls.values().find(|c| c.state == "incoming").map(|c| c.id) {
@@ -372,6 +423,8 @@ impl qobject::Phone {
             self.rust().send(Command::HangupAll);
         } else if line == "quit" {
             self.quit();
+        } else if let Some(e) = line.strip_prefix("error ") {
+            self.as_mut().error_message(qs(e));
         } else {
             self.as_mut().activate_requested();
         }
@@ -410,10 +463,20 @@ impl qobject::Phone {
         self.as_mut().set_settings_json(qs(&json));
     }
 
-    fn apply_settings(mut self: Pin<&mut Self>, mut s: Settings) -> Result<(), String> {
+    /// Save `s`, a change of `base` (default: this window's settings), merged with whatever
+    /// other windows saved meanwhile.
+    fn apply_settings(mut self: Pin<&mut Self>, base: Option<Settings>, mut s: Settings) -> Result<(), String> {
         s.normalize();
+        let mut base = base.unwrap_or_else(|| self.rust().settings.clone());
+        base.normalize();
+        let disk = Settings::load_beside(&self.rust().settings);
+        let same = |a: &Settings, b: &Settings| serde_json::to_value(a).ok() == serde_json::to_value(b).ok();
+        if !same(&disk, &base) {
+            s = crate::config::merge_settings(&base, &s, &disk);
+            s.normalize();
+        }
         s.save()?;
-        self.rust().send(Command::Configure(Box::new(s.clone())));
+        self.as_mut().configure_with(s.clone());
         crate::logging::apply(&s);
         let dnd = s.dnd;
         let aa = s.auto_answer != "off";
@@ -421,7 +484,156 @@ impl qobject::Phone {
         self.as_mut().set_dnd(dnd);
         self.as_mut().set_auto_answer(aa);
         self.as_mut().publish_settings();
+        self.as_mut().drop_vanished_account();
         Ok(())
+    }
+
+    /// Hand the engine `s` with only this window's account enabled.
+    fn configure_with(self: Pin<&mut Self>, s: Settings) {
+        let active = self.rust().active.clone();
+        self.rust().send(Command::Configure(Box::new(s.for_engine(active.as_deref()))));
+    }
+
+    /// The active account was deleted or disabled: give it up.
+    fn drop_vanished_account(self: Pin<&mut Self>) {
+        let Some(id) = self.rust().active.clone() else { return };
+        let still = self.rust().settings.accounts.iter().any(|a| a.id == id && a.enabled && !a.server.trim().is_empty());
+        if !still {
+            self.deactivate_account();
+        }
+    }
+
+    fn account_title(&self, id: &str) -> String {
+        self.rust().settings.accounts.iter().find(|a| a.id == id).map(|a| a.title()).unwrap_or_else(|| id.to_string())
+    }
+
+    /// Make `id` this window's account, if no other window has it.
+    fn activate(mut self: Pin<&mut Self>, id: &str) {
+        let title = self.account_title(id);
+        let got = match self.as_mut().rust_mut().db.as_mut() {
+            Some(c) => crate::db::acquire(c, id),
+            None => {
+                self.as_mut().error_message(qs("Can't activate an account without megasip.db"));
+                return;
+            }
+        };
+        match got {
+            Ok(Ok(())) => {}
+            Ok(Err(pid)) => {
+                self.as_mut().error_message(qs(&format!("{title} is already active in another window (pid {pid})")));
+                return;
+            }
+            Err(e) => {
+                self.as_mut().error_message(qs(&format!("Couldn't activate {title}: {e}")));
+                return;
+            }
+        }
+        self.as_mut().rust_mut().active = Some(id.to_string());
+        self.as_mut().set_active_account(qs(id));
+        crate::logging::set_log_name(Some(&title));
+        let s = self.rust().settings.clone();
+        self.as_mut().configure_with(s);
+        self.as_mut().set_missed_count(0);
+        self.as_mut().load_history();
+        self.as_mut().update_status();
+    }
+
+    /// Start-up requests from the command line: the `-a` account, then a number to dial.
+    fn start_up(mut self: Pin<&mut Self>, account: Option<String>, dial: Option<String>) {
+        if let Some(id) = &account {
+            self.as_mut().activate(id);
+        }
+        let Some(d) = dial else { return };
+        if account.is_some() {
+            if self.rust().active.is_none() {
+                // `-a` didn't get its account (another window won the race): don't call
+                // from the wrong identity; hand the number to the window that has it.
+                let holder = account.as_deref().and_then(|id| self.rust().db.as_ref().and_then(|c| crate::db::holder(c, id).ok().flatten()));
+                if let Some(pid) = holder {
+                    crate::ipc::send_to(pid, &format!("dial {d}"));
+                }
+                return;
+            }
+            // Dial once registered (on_event), or after 10 s regardless.
+            self.as_mut().rust_mut().pending_dial = Some(d);
+            let qt = self.qt_thread();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                let _ = qt.queue(|p| p.flush_pending_dial());
+            });
+        } else {
+            let qt = self.qt_thread();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let _ = qt.queue(move |mut p| {
+                    p.as_mut().activate_requested();
+                    let acc = p.rust().active.clone().unwrap_or_default();
+                    p.do_dial(&d, &acc);
+                });
+            });
+        }
+    }
+
+    fn flush_pending_dial(mut self: Pin<&mut Self>) {
+        if let Some(d) = self.as_mut().rust_mut().pending_dial.take() {
+            self.as_mut().activate_requested();
+            let acc = self.rust().active.clone().unwrap_or_default();
+            self.do_dial(&d, &acc);
+        }
+    }
+
+    /// Reload this window's account's history from megasip.db.
+    fn load_history(mut self: Pin<&mut Self>) {
+        let h = match (&self.rust().db, &self.rust().active) {
+            (Some(c), Some(id)) => crate::db::history(c, id).unwrap_or_else(|e| {
+                tracing::warn!("couldn't read call history: {e}");
+                Vec::new()
+            }),
+            _ => Vec::new(),
+        };
+        self.as_mut().rust_mut().history = h;
+        self.as_mut().publish_history();
+    }
+
+    fn update_status(self: Pin<&mut Self>) {
+        let status = match self.rust().active.clone() {
+            None if self.rust().settings.accounts.is_empty() => "No account — open Preferences to add one".to_string(),
+            None => "Pick one from the tray or here".to_string(),
+            // The account's name is shown next to this already.
+            Some(id) => match self.rust().accounts.iter().find(|a| a.id == id) {
+                Some(a) if a.state == "registered" => "Online".to_string(),
+                Some(a) => a.text.clone(),
+                None => "Starting…".to_string(),
+            },
+        };
+        self.set_status_text(qs(&status));
+    }
+
+    /// Another window saved settings or contacts.
+    fn reload_external(mut self: Pin<&mut Self>, settings: bool, contacts: bool) {
+        if settings {
+            let s = Settings::load_beside(&self.rust().settings);
+            let same = serde_json::to_value(&s).ok() == serde_json::to_value(&self.rust().settings).ok();
+            if !same {
+                crate::logging::apply(&s);
+                let (dnd, aa) = (s.dnd, s.auto_answer != "off");
+                self.as_mut().rust_mut().settings = s.clone();
+                self.as_mut().configure_with(s);
+                self.as_mut().set_dnd(dnd);
+                self.as_mut().set_auto_answer(aa);
+                self.as_mut().publish_settings();
+                self.as_mut().drop_vanished_account();
+                self.as_mut().update_status();
+            }
+        }
+        if contacts {
+            let c = store::load_contacts();
+            if c != self.rust().contacts {
+                self.as_mut().rust_mut().contacts = c;
+                self.as_mut().publish_contacts();
+                self.as_mut().publish_history();
+            }
+        }
     }
 
     fn do_dial(mut self: Pin<&mut Self>, number: &str, account: &str) {
@@ -433,9 +645,9 @@ impl qobject::Phone {
         let mut s = self.rust().settings.clone();
         if s.last_number != number {
             s.last_number = number;
-            let _ = s.save();
-            self.as_mut().rust_mut().settings = s;
-            self.as_mut().publish_settings();
+            if let Err(e) = self.as_mut().apply_settings(None, s) {
+                tracing::warn!("couldn't save the last number: {e}");
+            }
         }
     }
 
@@ -445,7 +657,7 @@ impl qobject::Phone {
 
     fn redial(self: Pin<&mut Self>) {
         let n = self.rust().settings.last_number.clone();
-        let acc = self.rust().settings.default_account.clone();
+        let acc = self.rust().active.clone().unwrap_or_default();
         self.do_dial(&n, &acc);
     }
 
@@ -496,7 +708,7 @@ impl qobject::Phone {
     fn set_dnd_on(mut self: Pin<&mut Self>, on: bool) {
         let mut s = self.rust().settings.clone();
         s.dnd = on;
-        if let Err(e) = self.as_mut().apply_settings(s) {
+        if let Err(e) = self.as_mut().apply_settings(None, s) {
             self.as_mut().error_message(qs(&e));
         }
     }
@@ -504,14 +716,15 @@ impl qobject::Phone {
     fn set_auto_answer_on(mut self: Pin<&mut Self>, on: bool) {
         let mut s = self.rust().settings.clone();
         s.auto_answer = if on { "all".into() } else { "off".into() };
-        if let Err(e) = self.as_mut().apply_settings(s) {
+        if let Err(e) = self.as_mut().apply_settings(None, s) {
             self.as_mut().error_message(qs(&e));
         }
     }
 
-    fn save_settings(self: Pin<&mut Self>, json: &QString) -> QString {
+    fn save_settings(self: Pin<&mut Self>, base: &QString, json: &QString) -> QString {
+        let base = serde_json::from_str::<Settings>(&base.to_string()).ok();
         match serde_json::from_str::<Settings>(&json.to_string()) {
-            Ok(s) => match self.apply_settings(s) {
+            Ok(s) => match self.apply_settings(base, s) {
                 Ok(()) => QString::default(),
                 Err(e) => qs(&e),
             },
@@ -543,6 +756,8 @@ impl qobject::Phone {
         }
         {
             let mut r = self.as_mut().rust_mut();
+            // Start from the file: another window may have changed it.
+            r.contacts = store::load_contacts();
             match r.contacts.iter_mut().find(|x| x.id == c.id) {
                 Some(x) => *x = c,
                 None => r.contacts.push(c),
@@ -557,6 +772,8 @@ impl qobject::Phone {
         let id = id.to_string();
         {
             let mut r = self.as_mut().rust_mut();
+            // Start from the file: another window may have changed it.
+            r.contacts = store::load_contacts();
             r.contacts.retain(|c| c.id != id);
             store::save_contacts(&r.contacts);
         }
@@ -571,6 +788,8 @@ impl qobject::Phone {
         let n = new.len() as i32;
         {
             let mut r = self.as_mut().rust_mut();
+            // Start from the file: another window may have changed it.
+            r.contacts = store::load_contacts();
             for c in new {
                 if !r.contacts.iter().any(|x| x.number == c.number) {
                     r.contacts.push(c);
@@ -592,19 +811,20 @@ impl qobject::Phone {
     fn delete_history(mut self: Pin<&mut Self>, id: &QString) {
         let id = id.to_string();
         {
-            let mut r = self.as_mut().rust_mut();
-            r.history.retain(|h| h.id != id);
-            store::save_history(&r.history);
+            if let Some(c) = &self.rust().db {
+                crate::db::delete_history(c, &id);
+            }
         }
-        self.as_mut().publish_history();
+        self.as_mut().load_history();
     }
 
     fn clear_history(mut self: Pin<&mut Self>) {
         {
-            let mut r = self.as_mut().rust_mut();
-            r.history.clear();
-            store::save_history(&r.history);
+            if let (Some(c), Some(id)) = (&self.rust().db, &self.rust().active) {
+                crate::db::clear_history(c, id);
+            }
         }
+        self.as_mut().load_history();
         self.as_mut().set_missed_count(0);
         self.as_mut().publish_history();
     }
@@ -665,6 +885,7 @@ impl qobject::Phone {
             v
         };
         let json = serde_json::json!({
+            "source": self.rust().source_label.to_string(),
             "streams": live.iter().map(named).collect::<Vec<_>>(),
             "last": last.as_ref().map(named),
             "mic": mic,
@@ -696,7 +917,73 @@ impl qobject::Phone {
         qs(&d.to_string_lossy())
     }
 
+    fn accounts_in_use(&self) -> QString {
+        let me = std::process::id();
+        let ids: Vec<String> = self
+            .rust()
+            .db
+            .as_ref()
+            .and_then(|c| crate::db::live(c).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| i.pid != me)
+            .filter_map(|i| i.account_id)
+            .collect();
+        qs(&serde_json::to_string(&ids).unwrap_or_default())
+    }
+
+    fn pick_account(mut self: Pin<&mut Self>, id: &QString) {
+        let id = id.to_string();
+        if self.rust().active.as_deref() == Some(id.as_str()) {
+            self.as_mut().activate_requested();
+            return;
+        }
+        let holder = self.rust().db.as_ref().and_then(|c| crate::db::holder(c, &id).ok().flatten());
+        if let Some(pid) = holder {
+            crate::ipc::send_to(pid, "show");
+            return;
+        }
+        if self.rust().active.is_none() {
+            self.as_mut().activate(&id);
+            return;
+        }
+        let exe = std::env::current_exe().unwrap_or_else(|_| "megasip".into());
+        match std::process::Command::new(exe)
+            .args(["--account", &id])
+            .stdin(std::process::Stdio::null())
+            .spawn()
+        {
+            // Reap it when it exits so it doesn't linger as a zombie.
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(e) => self.as_mut().error_message(qs(&format!("Couldn't open a new window: {e}"))),
+        }
+    }
+
+    fn deactivate_account(mut self: Pin<&mut Self>) {
+        if self.as_mut().rust_mut().active.take().is_none() {
+            return;
+        }
+        if let Some(c) = &self.rust().db {
+            crate::db::release(c);
+        }
+        self.as_mut().set_active_account(QString::default());
+        crate::logging::set_log_name(None);
+        let s = self.rust().settings.clone();
+        self.as_mut().configure_with(s);
+        self.as_mut().rust_mut().pending_dial = None;
+        self.as_mut().set_missed_count(0);
+        self.as_mut().load_history();
+        self.as_mut().update_status();
+    }
+
     fn quit(self: Pin<&mut Self>) {
+        if let Some(c) = &self.rust().db {
+            crate::db::unregister_self(c);
+        }
         self.rust().send(Command::Shutdown);
         // Let BYE / un-REGISTER go out.
         std::thread::sleep(std::time::Duration::from_millis(700));

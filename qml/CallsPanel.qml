@@ -155,20 +155,35 @@ QQC2.Pane {
             }
         }
 
-        // Microphone level, so you can see you're being heard.
-        QQC2.ProgressBar {
+        // Microphone (or --source) level, so you can see you're being heard.
+        RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.largeSpacing
             Layout.rightMargin: Kirigami.Units.largeSpacing
             visible: panel.calls.some(c => c.state === "connected")
-            from: 0
-            to: 1
-            value: 0
-            Timer {
-                interval: 100
-                repeat: true
-                running: parent.visible
-                onTriggered: parent.value = panel.phone.micLevel()
+            Kirigami.Icon {
+                source: panel.phone.sourceLabel ? "audio-x-generic" : "audio-input-microphone"
+                implicitWidth: Kirigami.Units.iconSizes.small
+                implicitHeight: Kirigami.Units.iconSizes.small
+            }
+            QQC2.Label {
+                visible: panel.phone.sourceLabel !== ""
+                text: panel.phone.sourceLabel
+                font: Kirigami.Theme.smallFont
+                elide: Text.ElideMiddle
+                Layout.maximumWidth: Kirigami.Units.gridUnit * 7
+            }
+            QQC2.ProgressBar {
+                Layout.fillWidth: true
+                from: 0
+                to: 1
+                value: 0
+                Timer {
+                    interval: 100
+                    repeat: true
+                    running: parent.visible
+                    onTriggered: parent.value = panel.phone.micLevel()
+                }
             }
         }
     }

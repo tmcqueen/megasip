@@ -203,8 +203,7 @@ Item {
 
     property string voicemailNumber: {
         const accs = settings.accounts || []
-        for (let a of accs) if (a.id === settings.defaultAccount && a.voicemailNumber) return a.voicemailNumber
-        for (let a of accs) if (a.voicemailNumber) return a.voicemailNumber
+        for (let a of accs) if (a.id === phone.activeAccount && a.voicemailNumber) return a.voicemailNumber
         return ""
     }
 

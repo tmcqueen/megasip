@@ -9,8 +9,13 @@ QQC2.ToolBar {
     required property var phone
     required property var accounts
     required property var settings
+    property var activeAcc: null
+    property var pickable: []
+    property var inUse: []
+    property var accTitle: a => a.label
     signal preferencesRequested()
     signal accountRequested()
+    signal menuOpening()
 
     function stateColor(s) {
         if (s === "registered") return Kirigami.Theme.positiveTextColor
@@ -18,9 +23,11 @@ QQC2.ToolBar {
         if (s === "registering") return Kirigami.Theme.neutralTextColor
         return Kirigami.Theme.disabledTextColor
     }
-    property var defaultAcc: {
-        for (let a of accounts) if (a.id === settings.defaultAccount) return a
-        return accounts.length ? accounts[0] : null
+    // Registration state of this window's account.
+    property var activeState: {
+        if (!activeAcc) return null
+        for (let a of accounts) if (a.id === activeAcc.id) return a
+        return null
     }
 
     contentItem: RowLayout {
@@ -30,7 +37,7 @@ QQC2.ToolBar {
             width: Kirigami.Units.gridUnit * 0.6
             height: width
             radius: width / 2
-            color: bar.phone.dnd ? Kirigami.Theme.negativeTextColor : bar.stateColor(bar.defaultAcc ? bar.defaultAcc.state : "off")
+            color: bar.phone.dnd ? Kirigami.Theme.negativeTextColor : bar.stateColor(bar.activeState ? bar.activeState.state : "off")
             Layout.leftMargin: Kirigami.Units.smallSpacing
         }
 
@@ -41,7 +48,7 @@ QQC2.ToolBar {
                 spacing: 0
                 QQC2.Label {
                     Layout.fillWidth: true
-                    text: bar.defaultAcc ? bar.defaultAcc.title : "No account"
+                    text: bar.activeAcc ? bar.accTitle(bar.activeAcc) : "No account active"
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
@@ -54,26 +61,49 @@ QQC2.ToolBar {
                 }
             }
             onClicked: {
-                if (bar.accounts.length > 1) accMenu.popup()
-                else if (!bar.defaultAcc || bar.defaultAcc.state !== "registered") bar.accountRequested()
+                if (bar.pickable.length === 0) { bar.accountRequested(); return }
+                bar.menuOpening()
+                accMenu.popup()
             }
             QQC2.Menu {
                 id: accMenu
                 Repeater {
-                    model: bar.accounts
+                    model: bar.pickable
                     QQC2.MenuItem {
                         required property var modelData
-                        text: modelData.title + "  —  " + modelData.text
+                        readonly property bool elsewhere: bar.inUse.includes(modelData.id)
+                        readonly property bool mine: !!bar.activeAcc && modelData.id === bar.activeAcc.id
+                        text: bar.accTitle(modelData) + (elsewhere ? "  —  in another window"
+                              : mine ? "" : bar.activeAcc ? "  —  open in a new window" : "")
                         checkable: true
-                        checked: bar.defaultAcc && modelData.id === bar.defaultAcc.id
+                        checked: mine
+                        enabled: !elsewhere
                         onTriggered: {
-                            const s = JSON.parse(bar.phone.settingsJson)
-                            s.defaultAccount = modelData.id
-                            bar.phone.saveSettings(JSON.stringify(s))
+                            bar.phone.pickAccount(modelData.id)
+                            checked = Qt.binding(() => mine)
                         }
                     }
                 }
+                QQC2.MenuSeparator { visible: !!bar.activeAcc }
+                QQC2.MenuItem {
+                    visible: !!bar.activeAcc
+                    text: bar.activeAcc ? "Deactivate " + bar.accTitle(bar.activeAcc) : ""
+                    icon.name: "system-log-out"
+                    onTriggered: bar.phone.deactivateAccount()
+                }
             }
+        }
+
+        // --source: what's being sent instead of the microphone.
+        Kirigami.Chip {
+            visible: bar.phone.sourceLabel !== ""
+            closable: false
+            checkable: false
+            icon.name: "audio-x-generic"
+            text: "Source: " + bar.phone.sourceLabel
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 9
+            QQC2.ToolTip.text: "Sending " + bar.phone.sourceDetail + " instead of the microphone (--source)"
+            QQC2.ToolTip.visible: hovered
         }
 
         QQC2.ToolButton {

@@ -211,6 +211,40 @@ impl Settings {
         config_dir().join("settings.json")
     }
 
+    /// settings.json as another window left it. A password the wallet couldn't give us
+    /// this time (locked, busy) is taken from `known` rather than treated as removed.
+    pub fn load_beside(known: &Settings) -> Settings {
+        let mut s = Settings::load();
+        s.normalize();
+        for a in &mut s.accounts {
+            if a.password.is_empty() {
+                if let Some(k) = known.accounts.iter().find(|k| k.id == a.id) {
+                    a.password = k.password.clone();
+                }
+            }
+        }
+        s
+    }
+
+    /// The enabled account a command line names: by label (any case), id, or user@domain.
+    pub fn find_account(&self, name: &str) -> Option<&Account> {
+        let name = name.trim();
+        let usable = || self.accounts.iter().filter(|a| a.enabled && !a.server.trim().is_empty());
+        usable()
+            .find(|a| a.label.trim().eq_ignore_ascii_case(name))
+            .or_else(|| usable().find(|a| a.id == name))
+            .or_else(|| usable().find(|a| format!("{}@{}", a.username, a.sip_domain()).eq_ignore_ascii_case(name)))
+    }
+
+    /// What the engine of a window gets: only its active account is enabled.
+    pub fn for_engine(&self, active: Option<&str>) -> Settings {
+        let mut s = self.clone();
+        for a in &mut s.accounts {
+            a.enabled = a.enabled && Some(a.id.as_str()) == active;
+        }
+        s
+    }
+
     pub fn load() -> Settings {
         let mut s: Settings = std::fs::read_to_string(Self::path())
             .ok()
@@ -348,4 +382,115 @@ fn remember_stored(id: &str, password: &str) {
 fn already_stored(id: &str, password: &str) -> bool {
     let g = STORED.lock().unwrap_or_else(|e| e.into_inner());
     g.as_ref().and_then(|m| m.get(id)).is_some_and(|p| p == password)
+}
+
+/// Three-way merge for windows sharing settings.json: what this window changed (`base` ->
+/// `mine`) applied on top of what is on disk now (`theirs`). Top-level settings merge per
+/// field and accounts per account, so a save never undoes another window's edits.
+pub fn merge_settings(base: &Settings, mine: &Settings, theirs: &Settings) -> Settings {
+    use serde_json::{Map, Value};
+    let v = |s: &Settings| serde_json::to_value(s).unwrap_or(Value::Null);
+    let (Value::Object(b), Value::Object(m), Value::Object(t)) = (v(base), v(mine), v(theirs)) else {
+        return mine.clone();
+    };
+    let mut out = Map::new();
+    for (k, tv) in &t {
+        let mv = m.get(k).unwrap_or(&Value::Null);
+        let bv = b.get(k).unwrap_or(&Value::Null);
+        out.insert(k.clone(), if mv == bv { tv.clone() } else { mv.clone() });
+    }
+    let mut merged: Settings = serde_json::from_value(Value::Object(out)).unwrap_or_else(|_| mine.clone());
+
+    // Accounts, by id.
+    let find = |list: &[Account], id: &str| list.iter().find(|a| a.id == id).cloned();
+    let mut accounts = Vec::new();
+    for ta in &theirs.accounts {
+        match (find(&base.accounts, &ta.id), find(&mine.accounts, &ta.id)) {
+            (Some(_), None) => {}                                   // deleted here
+            (Some(ba), Some(ma)) if ma != ba => accounts.push(ma),  // edited here
+            (_, Some(ma)) if find(&base.accounts, &ta.id).is_none() => accounts.push(ma),
+            _ => accounts.push(ta.clone()),                         // theirs (or untouched)
+        }
+    }
+    for ma in &mine.accounts {
+        let new_here = find(&base.accounts, &ma.id).is_none() && find(&theirs.accounts, &ma.id).is_none();
+        if new_here {
+            accounts.push(ma.clone());
+        }
+    }
+    merged.accounts = accounts;
+    merged.secret_error = mine.secret_error.clone();
+    merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn acc(id: &str, label: &str, user: &str, domain: &str, enabled: bool) -> Account {
+        Account { id: id.into(), label: label.into(), username: user.into(), domain: domain.into(),
+                  server: "sip.example.com".into(), enabled, ..Account::default() }
+    }
+
+    fn two() -> Settings {
+        Settings {
+            accounts: vec![acc("w1", "Work", "alice", "ex.com", true), acc("h1", "Home", "bob", "ex.com", false),
+                           acc("p1", "Personal", "carol", "ex.com", true)],
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn find_account() {
+        let s = two();
+        for n in ["work", "w1", "ALICE@ex.com", " Work "] {
+            assert_eq!(s.find_account(n).map(|a| a.id.as_str()), Some("w1"), "{n}");
+        }
+        assert!(s.find_account("Home").is_none(), "disabled");
+        assert!(s.find_account("nope").is_none());
+    }
+
+    #[test]
+    fn merge_keeps_other_windows_changes() {
+        let base = two();
+        // This window turns on DND and edits Work; another window added "Extra" and changed the codecs.
+        let mut mine = base.clone();
+        mine.dnd = true;
+        mine.accounts[0].display_name = "Alice W".into();
+        let mut theirs = base.clone();
+        theirs.accounts.push(acc("x1", "Extra", "dave", "ex.com", true));
+        theirs.codecs = vec!["pcmu".into()];
+        let m = merge_settings(&base, &mine, &theirs);
+        let ids: Vec<&str> = m.accounts.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["w1", "h1", "p1", "x1"]);
+        assert!(m.dnd);
+        assert_eq!(m.accounts[0].display_name, "Alice W");
+        assert_eq!(m.codecs, vec!["pcmu".to_string()]);
+
+        // This window deleted Home and added New; the other window edited Personal.
+        let mut mine = base.clone();
+        mine.accounts.remove(1);
+        mine.accounts.push(acc("n1", "New", "erin", "ex.com", true));
+        let mut theirs = base.clone();
+        theirs.accounts[2].label = "Private".into();
+        let m = merge_settings(&base, &mine, &theirs);
+        let got: Vec<(&str, &str)> = m.accounts.iter().map(|a| (a.id.as_str(), a.label.as_str())).collect();
+        assert_eq!(got, vec![("w1", "Work"), ("p1", "Private"), ("n1", "New")]);
+
+        // The other window deleted an account this window didn't touch: it stays deleted.
+        let mut theirs = base.clone();
+        theirs.accounts.remove(2);
+        let m = merge_settings(&base, &base, &theirs);
+        assert_eq!(m.accounts.len(), 2);
+    }
+
+    #[test]
+    fn for_engine() {
+        let s = two();
+        let only = s.for_engine(Some("w1"));
+        let on: Vec<&str> = only.accounts.iter().filter(|a| a.enabled).map(|a| a.id.as_str()).collect();
+        assert_eq!(on, vec!["w1"]);
+        assert!(s.for_engine(None).accounts.iter().all(|a| !a.enabled));
+        assert!(s.for_engine(Some("h1")).accounts.iter().all(|a| !a.enabled), "a disabled account stays off");
+    }
 }

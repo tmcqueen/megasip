@@ -12,6 +12,7 @@ Item {
     property var contacts: []
     property var history: []
     signal dialRequested(string number)
+    readonly property var training: phone.trainingJson ? JSON.parse(phone.trainingJson) : ({})
 
     readonly property bool inCall: activeCall !== null && (activeCall.state === "connected" || activeCall.state === "early")
 
@@ -119,7 +120,17 @@ Item {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        // The space between the number and the keys; a connected agent's Agent Training
+        // board shows here while it has one open.
+        Item {
+            Layout.fillHeight: true
+            Layout.fillWidth: true
+            TrainingBoard {
+                anchors.fill: parent
+                visible: page.training.visible === true
+                model: page.training
+            }
+        }
 
         GridLayout {
             id: keys

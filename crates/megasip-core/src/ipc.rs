@@ -23,6 +23,20 @@ pub fn path_for(pid: u32) -> PathBuf {
     PathBuf::from(format!(r"\\.\pipe\megasip-{pid}"))
 }
 
+/// The MCP endpoint of the window with this PID (see `mcp::serve_window`).
+#[cfg(unix)]
+pub fn mcp_path_for(pid: u32) -> PathBuf {
+    let dir = std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    dir.join(format!("megasip-mcp-{pid}.sock"))
+}
+
+#[cfg(windows)]
+pub fn mcp_path_for(pid: u32) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\megasip-mcp-{pid}"))
+}
+
 /// Connect to the endpoint at `path`.
 #[cfg(unix)]
 fn connect(path: &Path) -> std::io::Result<impl Write> {
@@ -157,7 +171,10 @@ pub fn take_receiver() -> Option<Receiver<String>> {
 /// Remove this process's socket file (a named pipe goes away with its process).
 pub fn cleanup() {
     #[cfg(unix)]
-    let _ = std::fs::remove_file(path_for(std::process::id()));
+    {
+        let _ = std::fs::remove_file(path_for(std::process::id()));
+        let _ = std::fs::remove_file(mcp_path_for(std::process::id()));
+    }
 }
 
 #[cfg(test)]

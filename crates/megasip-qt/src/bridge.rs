@@ -31,6 +31,8 @@ pub mod qobject {
         /// What `--source` sends instead of the microphone ("" when it's the microphone).
         #[qproperty(QString, source_label)]
         #[qproperty(QString, source_detail)]
+        /// Agent Training's board while a connected agent has it open (JSON; "" until then).
+        #[qproperty(QString, training_json)]
         type Phone = super::PhoneRust;
 
         #[qinvokable]
@@ -146,6 +148,7 @@ pub mod qobject {
 }
 
 use crate::controller::{self, Changed, Controller, Out, StartRequest};
+use crate::mcp::{Exec, Job, McpState};
 use crate::media::hub;
 use core::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
@@ -168,9 +171,12 @@ pub struct PhoneRust {
     active_account: QString,
     source_label: QString,
     source_detail: QString,
+    training_json: QString,
 
     /// Set in `initialize`, before QML can call anything.
     ctl: Option<Controller>,
+    /// What connected agents' tools keep beside the controller (see `mcp`).
+    mcp: McpState,
 }
 
 fn qs(s: &str) -> QString {
@@ -230,12 +236,32 @@ impl cxx_qt::Initialize for qobject::Phone {
             .name("megasip-events".into())
             .spawn(move || {
                 while let Some(ev) = ev_rx.blocking_recv() {
-                    if qt.queue(move |p| p.run(|c| c.on_event(ev))).is_err() {
+                    if qt.queue(move |p| p.engine_event(ev)).is_err() {
                         break;
                     }
                 }
             })
             .expect("event thread");
+
+        // Agents (`megasip --mcp -a <this window's account>`) -> Qt thread.
+        let qt = std::sync::Mutex::new(self.qt_thread());
+        let exec: Exec = std::sync::Arc::new(move |job: Job| {
+            qt.lock()
+                .map(|q| q.queue(move |p| p.mcp_job(job)).is_ok())
+                .unwrap_or(false)
+        });
+        crate::mcp::serve_window(exec);
+        // Call quality samples for the agents' reports.
+        let qt = self.qt_thread();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if qt
+                .queue(|p| p.mcp_job(Box::new(|ctl, st| st.sample(ctl))))
+                .is_err()
+            {
+                break;
+            }
+        });
 
         // Second instances / tel: links -> Qt thread.
         if let Some(rx) = crate::ipc::take_receiver() {
@@ -280,7 +306,37 @@ impl qobject::Phone {
         r
     }
 
-    fn apply(self: Pin<&mut Self>, o: Out) {
+    /// An engine event: the agents' records first, then the controller.
+    fn engine_event(mut self: Pin<&mut Self>, ev: crate::engine::Event) {
+        {
+            let mut r = self.as_mut().rust_mut();
+            let r = &mut *r;
+            if let Some(ctl) = r.ctl.as_ref() {
+                r.mcp.observe(&ev, ctl);
+            }
+        }
+        self.run(|c| c.on_event(ev));
+    }
+
+    /// Run an agent's tool job on the controller, then do what it asked for.
+    fn mcp_job(mut self: Pin<&mut Self>, job: Job) {
+        let (outbox, board) = {
+            let mut r = self.as_mut().rust_mut();
+            let r = &mut *r;
+            let Some(ctl) = r.ctl.as_mut() else { return };
+            job(ctl, &mut r.mcp);
+            (ctl.take_outbox(), r.mcp.take_training_change())
+        };
+        for o in outbox {
+            self.as_mut().apply(o);
+        }
+        if let Some(b) = board {
+            self.as_mut().set_training_json(qs(&b));
+        }
+    }
+
+    fn apply(mut self: Pin<&mut Self>, o: Out) {
+        self.as_mut().rust_mut().mcp.observe_out(&o);
         match o {
             Out::Changed(c) => self.apply_changed(c),
             Out::Incoming { id, name, number } => {

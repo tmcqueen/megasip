@@ -194,9 +194,11 @@ history.
 
 ### AI agents (MCP)
 
-`megasip --mcp -a <account> [--source …]` runs one account with no window as an
-[MCP](https://modelcontextprotocol.io) server on stdin/stdout, so an AI agent (Claude Code,
-Claude Desktop, or any MCP client) can run VoIP tests for you. For Claude Code:
+`megasip --mcp -a <account> [--source …]` is an [MCP](https://modelcontextprotocol.io)
+server on stdin/stdout, so an AI agent (Claude Code, Claude Desktop, or any MCP client) can
+run VoIP tests for you. If a MegaSIP window already has that account, the agent drives that
+window: its calls show up there and you can watch, answer or take over. Otherwise it runs
+the account itself, with no window. For Claude Code:
 
 ```sh
 claude mcp add megasip -- megasip --mcp -a <account>
@@ -240,7 +242,8 @@ tell it not to.
 
 Stdout is the MCP channel, so `--debug` can't be used with `--mcp`; set
 `MEGASIP_LOG=debug` for logs on stderr. When the client disconnects, MegaSIP hangs up,
-un-registers and exits.
+un-registers and exits; a window it was driving just carries on. A window takes one
+agent at a time; a second one waits until the first disconnects.
 
 ## Preferences
 

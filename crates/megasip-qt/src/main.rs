@@ -37,9 +37,10 @@ Usage:
   megasip --hangup              hang up all calls
   megasip --quit                quit every MegaSIP window
   megasip --cli -a <name>       no window: commands on stdin, events as JSON on stdout
-  megasip --mcp -a <name>       no window: an MCP server on stdin/stdout, so an AI agent can
-                                place calls, send DTMF, pull call quality reports and change
-                                settings (never account passwords); emergency numbers refused
+  megasip --mcp -a <name>       an MCP server on stdin/stdout, so an AI agent can place calls,
+                                send DTMF, pull call quality reports and change settings (never
+                                account passwords); emergency numbers refused. If a window has
+                                the account, the agent drives that window; else no window
   megasip --mcp-allow <prefix>  with --mcp: only call numbers or URIs starting with <prefix>
                                 (repeat for more)
   megasip --debug               log at debug level to stdout (command line, hand-off, window)
@@ -167,7 +168,25 @@ fn main() {
             .find_account(&name)
             .cloned()
             .unwrap_or_else(|| fail(&format!("no account named \"{name}\"")));
+        let policy = mcp::DialPolicy { allow: mcp_allow };
+        // A window has the account: talk to that window, so the agent drives what's on
+        // screen (and Agent Training can be shown).
+        let holder = db
+            .as_ref()
+            .ok()
+            .and_then(|c| db::holder(c, &acc.id).ok().flatten())
+            .filter(|pid| *pid != std::process::id());
         drop(db);
+        if let Some(pid) = holder {
+            tracing::debug!("--mcp: pid {pid} has {}; bridging to it", acc.id);
+            match mcp::bridge(pid, &policy) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => fail(&format!(
+                    "{} is active in another MegaSIP (pid {pid}) that doesn't take agents ({e}): a --cli session, or an older version",
+                    acc.title()
+                )),
+            }
+        }
         logging::set_log_name(Some(&acc.short_name));
         // SIGTERM/SIGINT: hang up and un-register, as a window does.
         let _ = ctrlc::set_handler(|| {
@@ -177,7 +196,6 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_secs(3));
             std::process::exit(0);
         });
-        let policy = mcp::DialPolicy { allow: mcp_allow };
         match mcp::run(acc.id.clone(), policy) {
             Ok(code) => std::process::exit(code),
             Err(e) => fail(&format!("can't start: {e}")),

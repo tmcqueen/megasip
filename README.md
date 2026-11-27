@@ -53,23 +53,22 @@ none (Windows), and fill in names the desktop's theme lacks.
 
 ### Windows
 
-The core builds and passes its tests on Windows, and CI builds the Qt app there with the
-official Qt 6.10 (MSVC) and screenshots every screen. There is no installer yet. To build
-it yourself, install Rust and Qt 6.10 for MSVC (with Qt SVG), put Qt's `bin` on `PATH`, and
-run `cargo build --release -p megasip-qt`; `windeployqt` gathers the DLLs next to
-`target\release\megasip.exe`.
+The core builds and passes its tests on Windows. CI builds the Qt app there with the
+official Qt 6.10 (MSVC), packages it with `windeployqt`, and checks the package by running it
+with Qt off `PATH` and screenshotting every screen.
 
-### Code layout
+**To get a build:** open the latest run of the CI workflow under the repository's Actions
+tab and download the `MegaSIP-<version>-windows-x64` artifact. Unzip it anywhere and run
+`megasip.exe`; nothing needs installing (the Visual C++ runtime is included). Pushing a tag
+such as `v0.5.1` also attaches the zip to a GitHub release. There is no installer yet, so
+there's no Start menu entry, `sip:`/`tel:` link handling or start at login on Windows.
 
-The repository is a Cargo workspace:
-
-- `crates/megasip-core`: everything that doesn't depend on a GUI toolkit. That is the SIP
-  engine, media, settings, the account lock table, IPC between windows, secrets, logging and
-  the headless `--cli` mode.
-- `crates/megasip-qt`: the Qt/QML app (the `megasip` binary), with the cxx-qt bridge, `cpp/` and
-  `qml/`.
-
-Build and test from the repository root as before; `cargo test` covers both crates.
+Building on Linux for Windows isn't practical: cxx-qt runs the target Qt's `qmake`, and a
+Windows Qt only has `qmake.exe`. `megasip-core` alone does cross-compile:
+`cargo build -p megasip-core --target x86_64-pc-windows-gnu` (with `gcc-mingw-w64-x86-64`).
+To build the app on Windows yourself, install Rust and Qt 6.10 for MSVC (with Qt SVG), put
+Qt's `bin` on `PATH`, and run `cargo build --release -p megasip-qt`; `windeployqt` gathers
+the DLLs next to `target\release\megasip.exe`.
 
 ### Packaging: .deb and .rpm only, no Flatpak or Snap
 

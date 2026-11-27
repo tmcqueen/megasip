@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // Active calls (MicroSIP's call tabs): one row per call, plus controls for it.
 QQC2.Pane {
@@ -14,13 +13,11 @@ QQC2.Pane {
     signal transferRequested(int id)
     signal qualityRequested(int id)
 
-    padding: Kirigami.Units.smallSpacing
-    Kirigami.Theme.colorSet: Kirigami.Theme.Window
-    Kirigami.Theme.inherit: false
+    padding: Units.smallSpacing
 
     background: Rectangle {
-        color: Kirigami.Theme.backgroundColor
-        Kirigami.Separator { anchors { left: parent.left; right: parent.right; top: parent.top } }
+        color: Theme.backgroundColor
+        Separator { anchors { left: parent.left; right: parent.right; top: parent.top } }
     }
 
     function stateText(c) {
@@ -39,7 +36,7 @@ QQC2.Pane {
     }
 
     contentItem: ColumnLayout {
-        spacing: Kirigami.Units.smallSpacing
+        spacing: Units.smallSpacing
 
         Repeater {
             model: panel.calls
@@ -50,10 +47,10 @@ QQC2.Pane {
                 highlighted: panel.selected && panel.selected.id === modelData.id && panel.calls.length > 1
                 onClicked: if (modelData.state === "connected" && modelData.held) panel.phone.hold(modelData.id, false)
                 contentItem: RowLayout {
-                    spacing: Kirigami.Units.smallSpacing
-                    Kirigami.Icon {
+                    spacing: Units.smallSpacing
+                    Icon {
                         source: row.modelData.direction === "in" ? "call-incoming" : "call-outgoing"
-                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        implicitWidth: Units.iconSizes.smallMedium
                         implicitHeight: implicitWidth
                     }
                     ColumnLayout {
@@ -69,22 +66,22 @@ QQC2.Pane {
                             Layout.fillWidth: true
                             text: panel.stateText(row.modelData)
                                   + (row.modelData.codec ? "  ·  " + row.modelData.codec : "")
-                            font: Kirigami.Theme.smallFont
+                            font: Theme.smallFont
                             opacity: 0.75
                             elide: Text.ElideRight
                         }
                     }
-                    Kirigami.Icon {
+                    Icon {
                         source: "security-high"
                         visible: row.modelData.secure
-                        implicitWidth: Kirigami.Units.iconSizes.small
+                        implicitWidth: Units.iconSizes.small
                         implicitHeight: implicitWidth
                         QQC2.ToolTip.text: "Encrypted media (SRTP)"
                     }
                     QQC2.ToolButton {
                         visible: row.modelData.state === "incoming"
                         icon.name: "call-start"
-                        icon.color: Kirigami.Theme.positiveTextColor
+                        icon.color: Theme.positiveTextColor
                         onClicked: panel.phone.answer(row.modelData.id)
                         QQC2.ToolTip.text: "Answer"
                         QQC2.ToolTip.visible: hovered
@@ -107,7 +104,7 @@ QQC2.Pane {
                     }
                     QQC2.ToolButton {
                         icon.name: "call-stop"
-                        icon.color: Kirigami.Theme.negativeTextColor
+                        icon.color: Theme.negativeTextColor
                         onClicked: row.modelData.state === "incoming" ? panel.phone.reject(row.modelData.id) : panel.phone.hangup(row.modelData.id)
                         QQC2.ToolTip.text: row.modelData.state === "incoming" ? "Decline" : "Hang up"
                         QQC2.ToolTip.visible: hovered
@@ -120,7 +117,7 @@ QQC2.Pane {
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
             visible: panel.calls.some(c => c.state === "connected")
-            spacing: Kirigami.Units.smallSpacing
+            spacing: Units.smallSpacing
 
             QQC2.ToolButton {
                 icon.name: "mic-off"
@@ -158,20 +155,20 @@ QQC2.Pane {
         // Microphone (or --source) level, so you can see you're being heard.
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.largeSpacing
-            Layout.rightMargin: Kirigami.Units.largeSpacing
+            Layout.leftMargin: Units.largeSpacing
+            Layout.rightMargin: Units.largeSpacing
             visible: panel.calls.some(c => c.state === "connected")
-            Kirigami.Icon {
+            Icon {
                 source: panel.phone.sourceLabel ? "audio-x-generic" : "audio-input-microphone"
-                implicitWidth: Kirigami.Units.iconSizes.small
-                implicitHeight: Kirigami.Units.iconSizes.small
+                implicitWidth: Units.iconSizes.small
+                implicitHeight: Units.iconSizes.small
             }
             QQC2.Label {
                 visible: panel.phone.sourceLabel !== ""
                 text: panel.phone.sourceLabel
-                font: Kirigami.Theme.smallFont
+                font: Theme.smallFont
                 elide: Text.ElideMiddle
-                Layout.maximumWidth: Kirigami.Units.gridUnit * 7
+                Layout.maximumWidth: Units.gridUnit * 7
             }
             QQC2.ProgressBar {
                 Layout.fillWidth: true

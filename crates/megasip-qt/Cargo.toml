@@ -1,6 +1,6 @@
 [package]
 name = "megasip-qt"
-description = "A KDE/Wayland voice-only port of the MicroSIP softphone"
+description = "The Qt/QML app of MegaSIP, a voice-only port of the MicroSIP softphone"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

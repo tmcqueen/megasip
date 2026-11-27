@@ -1,6 +1,7 @@
 # MegaSIP
 
-A voice-only SIP softphone for KDE Plasma on Wayland: a Rust port of
+A voice-only SIP softphone for Linux desktops (made on KDE Plasma, Wayland), with Windows
+on the way: a Rust port of
 [MicroSIP](https://www.microsip.org/) (GPLv2), "MicroSIP-Lite". It behaves like MicroSIP
 except for settings, which are one Preferences window with the account editor built in.
 
@@ -11,7 +12,9 @@ except for settings, which are one Preferences window with the account editor bu
   a pure-Rust port of WebRTC's audio processing (AEC3).
 - Sound through PipeWire/PulseAudio (`cpal`), opened only while you're on a call, so
   Plasma's microphone indicator tells the truth.
-- Kirigami UI (Qt 6 / QML through `cxx-qt`), system tray, KDE notifications.
+- Qt 6 / QML UI through `cxx-qt`, with no KDE Frameworks needed, so the same UI builds on
+  Windows. On Plasma it uses the desktop's own style and KDE notifications when they're
+  installed; elsewhere, Qt's Fusion style (Fluent on Windows) and tray notifications.
 
 ## Features
 
@@ -31,10 +34,11 @@ Windows-only extras.
 
 ```sh
 sudo apt install cargo build-essential pkg-config clang \
-    qt6-base-dev qt6-declarative-dev libkf6i18n-dev libasound2-dev \
-    qml6-module-org-kde-kirigami qml6-module-org-kde-kirigamiaddons-formcard \
-    qml6-module-org-kde-kirigamiaddons-components qml6-module-org-kde-notifications \
-    qml6-module-qt-labs-platform
+    qt6-base-dev qt6-declarative-dev libasound2-dev qt6-svg-plugins \
+    qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-dialogs \
+    qml6-module-qtquick-effects qml6-module-qtqml-models qml6-module-qt-labs-platform
+# Optional, on Plasma: its style and its notifications (with Answer / Decline)
+sudo apt install qml6-module-org-kde-qqc2desktopstyle qml6-module-org-kde-notifications
 sudo apt install lld   # optional: faster linking, and silences cxx-qt's linker warning
 ./install.sh          # builds, then installs into ~/.local (no sudo)
 megasip
@@ -42,6 +46,18 @@ megasip
 
 `install.sh` also installs the desktop entry, icon and notification config, and
 registers MegaSIP for `sip:`/`tel:` links where no other app handles them.
+
+The UI bundles the [Breeze](https://invent.kde.org/frameworks/breeze-icons) icons it uses
+(LGPL-3.0-or-later; `crates/megasip-qt/icons`). They are the icon theme where the desktop has
+none (Windows), and fill in names the desktop's theme lacks.
+
+### Windows
+
+The core builds and passes its tests on Windows, and CI builds the Qt app there with the
+official Qt 6.10 (MSVC) and screenshots every screen. There is no installer yet. To build
+it yourself, install Rust and Qt 6.10 for MSVC (with Qt SVG), put Qt's `bin` on `PATH`, and
+run `cargo build --release -p megasip-qt`; `windeployqt` gathers the DLLs next to
+`target\release\megasip.exe`.
 
 ### Code layout
 
@@ -72,12 +88,12 @@ or Snap. The reasons:
   sandbox permission instead of the plain freedesktop D-Bus services MegaSIP uses now. Each
   of those is behaviour to re-test on both Plasma and GNOME, and a softphone that misses a
   ring because of a permission is worse than one that is harder to install.
-- **Native packages use the system's Qt and KDE Frameworks.** That is what gives MegaSIP
-  the Plasma style and theme. A Flatpak would bring its own KDE runtime, and a Snap would
-  need KDE content snaps; both are large downloads for a small app.
-- **The target distributions already ship everything needed.** Fedora has had KDE
-  Frameworks 6 since Fedora 40. Debian 13 and recent Ubuntu releases have it too; Ubuntu
-  24.04 LTS does not, so MegaSIP needs a newer Ubuntu.
+- **Native packages use the system's Qt.** That is what gives MegaSIP the desktop's style
+  and theme (Plasma's when it's installed). A Flatpak would bring its own Qt runtime, and a
+  Snap would need content snaps; both are large downloads for a small app.
+- **The target distributions already ship everything needed.** MegaSIP needs Qt 6.5 or
+  newer (CI uses 6.10): Fedora 39+, Debian 13 and Ubuntu 24.10+ have it; Ubuntu 24.04 LTS (Qt 6.4) does
+  not.
 
 If MegaSIP is ever meant for a wider audience, Flatpak is the route to revisit, starting
 with the PID change above.

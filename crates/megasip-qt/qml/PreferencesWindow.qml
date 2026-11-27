@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import QtQuick.Dialogs as Dialogs
-import org.kde.kirigami as Kirigami
 
 // Preferences: a modal window with categories on the left and the chosen page on the
 // right. Changes collect in a draft and are applied with Save (accounts re-register then,
@@ -16,12 +15,12 @@ QQC2.ApplicationWindow {
     title: "Preferences"
     flags: Qt.Dialog
     modality: Qt.ApplicationModal
-    width: Kirigami.Units.gridUnit * 46
-    height: Kirigami.Units.gridUnit * 38
-    minimumWidth: Kirigami.Units.gridUnit * 34
-    minimumHeight: Kirigami.Units.gridUnit * 24
+    width: Units.gridUnit * 46
+    height: Units.gridUnit * 38
+    minimumWidth: Units.gridUnit * 34
+    minimumHeight: Units.gridUnit * 24
     visible: false
-    color: Kirigami.Theme.backgroundColor
+    color: Theme.backgroundColor
 
     property var draft: ({})
     property bool dirty: false
@@ -110,10 +109,10 @@ QQC2.ApplicationWindow {
         return null
     }
     function stateColor(s) {
-        if (s === "registered") return Kirigami.Theme.positiveTextColor
-        if (s === "error") return Kirigami.Theme.negativeTextColor
-        if (s === "registering") return Kirigami.Theme.neutralTextColor
-        return Kirigami.Theme.disabledTextColor
+        if (s === "registered") return Theme.positiveTextColor
+        if (s === "error") return Theme.negativeTextColor
+        if (s === "registering") return Theme.neutralTextColor
+        return Theme.disabledTextColor
     }
     function accTitle(a) {
         if (!a) return ""
@@ -139,11 +138,11 @@ QQC2.ApplicationWindow {
         forceClose = false
     }
 
-    Kirigami.PromptDialog {
+    PromptDialog {
         id: unsaved
         title: "Save your changes?"
         subtitle: "You changed some preferences without saving them."
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
+        standardButtons: QQC2.Dialog.Save | QQC2.Dialog.Discard | QQC2.Dialog.Cancel
         onAccepted: if (win.save()) win.close()
         onDiscarded: { win.reload(); win.forceClose = true; win.close(); unsaved.close() }
     }
@@ -158,11 +157,9 @@ QQC2.ApplicationWindow {
         // ------------------------------------------------------------ sidebar
         QQC2.Pane {
             Layout.fillHeight: true
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 13
-            padding: Kirigami.Units.largeSpacing
-            Kirigami.Theme.colorSet: Kirigami.Theme.Window
-            Kirigami.Theme.inherit: false
-            background: Rectangle { color: Kirigami.Theme.backgroundColor }
+            Layout.preferredWidth: Units.gridUnit * 13
+            padding: Units.largeSpacing
+            background: Rectangle { color: Theme.backgroundColor }
             contentItem: ListView {
                 id: sidebar
                 model: win.pages
@@ -180,7 +177,7 @@ QQC2.ApplicationWindow {
                 }
             }
         }
-        Kirigami.Separator { Layout.fillHeight: true }
+        Separator { Layout.fillHeight: true }
 
         // ------------------------------------------------------------ content
         ColumnLayout {
@@ -198,19 +195,19 @@ QQC2.ApplicationWindow {
                 ColumnLayout {
                     width: scroller.availableWidth
                     spacing: 0
-                    Kirigami.Heading {
+                    Heading {
                         Layout.fillWidth: true
-                        Layout.margins: Kirigami.Units.gridUnit
-                        Layout.bottomMargin: Kirigami.Units.largeSpacing
+                        Layout.margins: Units.gridUnit
+                        Layout.bottomMargin: Units.largeSpacing
                         level: 2
                         text: win.pages[win.current].name
                     }
                     Loader {
                         id: pageLoader
                         Layout.fillWidth: true
-                        Layout.leftMargin: Kirigami.Units.gridUnit
-                        Layout.rightMargin: Kirigami.Units.gridUnit
-                        Layout.bottomMargin: Kirigami.Units.gridUnit
+                        Layout.leftMargin: Units.gridUnit
+                        Layout.rightMargin: Units.gridUnit
+                        Layout.bottomMargin: Units.gridUnit
                         // Rebuilt on page change and on reload/revert, so every field shows the draft.
                         property string key: win.current + ":" + win.version
                         sourceComponent: win.pages[win.current].component
@@ -226,7 +223,7 @@ QQC2.ApplicationWindow {
                     QQC2.Label {
                         Layout.fillWidth: true
                         text: win.saveError || (win.dirty ? "You have unsaved changes" : "")
-                        color: win.saveError ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                        color: win.saveError ? Theme.negativeTextColor : Theme.textColor
                         elide: Text.ElideRight
                     }
                     QQC2.Button {
@@ -273,13 +270,13 @@ QQC2.ApplicationWindow {
                             Image {
                                 visible: !!accRow.a.icon
                                 source: accRow.a.icon ? win.phone.accountIcon(accRow.a.icon, accRow.a.iconColor || "", win.accTitle(accRow.a), false) : ""
-                                sourceSize.width: Kirigami.Units.iconSizes.smallMedium
-                                sourceSize.height: Kirigami.Units.iconSizes.smallMedium
-                                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                                sourceSize.width: Units.iconSizes.smallMedium
+                                sourceSize.height: Units.iconSizes.smallMedium
+                                Layout.preferredWidth: Units.iconSizes.smallMedium
+                                Layout.preferredHeight: Units.iconSizes.smallMedium
                             }
                             Rectangle {
-                                implicitWidth: Kirigami.Units.gridUnit * 0.6
+                                implicitWidth: Units.gridUnit * 0.6
                                 implicitHeight: implicitWidth
                                 radius: width / 2
                                 color: win.stateColor(accRow.st ? accRow.st.state : "off")
@@ -291,7 +288,7 @@ QQC2.ApplicationWindow {
                                 QQC2.Label {
                                     Layout.fillWidth: true
                                     text: accRow.st ? accRow.st.text : (accRow.a.enabled === false ? "Disabled" : "Not saved yet")
-                                    font: Kirigami.Theme.smallFont
+                                    font: Theme.smallFont
                                     opacity: 0.75
                                     elide: Text.ElideRight
                                 }
@@ -299,8 +296,8 @@ QQC2.ApplicationWindow {
                             QQC2.Label {
                                 text: "Default"
                                 visible: accRow.a.id === win.draft.defaultAccount
-                                font: Kirigami.Theme.smallFont
-                                color: Kirigami.Theme.positiveTextColor
+                                font: Theme.smallFont
+                                color: Theme.positiveTextColor
                             }
                         }
                     }
@@ -329,9 +326,9 @@ QQC2.ApplicationWindow {
                     description: "What your provider or PBX gave you."
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: width > Kirigami.Units.gridUnit * 24 ? 2 : 1
-                        columnSpacing: Kirigami.Units.largeSpacing
-                        rowSpacing: Kirigami.Units.largeSpacing
+                        columns: width > Units.gridUnit * 24 ? 2 : 1
+                        columnSpacing: Units.largeSpacing
+                        rowSpacing: Units.largeSpacing
                         PrefField {
                             label: "SIP server"
                             QQC2.TextField {
@@ -352,7 +349,7 @@ QQC2.ApplicationWindow {
                         }
                         PrefField {
                             label: "Password"
-                            Kirigami.PasswordField {
+                            PasswordField {
                                 Layout.fillWidth: true
                                 text: win.acc() ? win.acc().password || "" : ""
                                 onTextEdited: win.setAcc("password", text)
@@ -426,19 +423,19 @@ QQC2.ApplicationWindow {
 
                     Flow {
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
+                        spacing: Units.smallSpacing
                         QQC2.ToolButton {
                             checkable: true
                             checked: iconSection.glyph === ""
                             display: QQC2.AbstractButton.TextBesideIcon
                             text: "MegaSIP's own"
                             icon.name: "org.megasip.MegaSIP"
-                            icon.width: Kirigami.Units.iconSizes.medium
-                            icon.height: Kirigami.Units.iconSizes.medium
+                            icon.width: Units.iconSizes.medium
+                            icon.height: Units.iconSizes.medium
                             onClicked: iconSection.pick("", iconSection.tint)
                             QQC2.ToolTip.text: "No icon of its own: shown like any other MegaSIP window"
                             QQC2.ToolTip.visible: hovered
-                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                            QQC2.ToolTip.delay: Units.toolTipDelay
                         }
                         Repeater {
                             model: win.iconGlyphs
@@ -450,12 +447,12 @@ QQC2.ApplicationWindow {
                                 text: modelData.name
                                 icon.source: win.phone.accountIcon(modelData.key, iconSection.tint, win.accTitle(win.acc()), false)
                                 icon.color: "transparent"
-                                icon.width: Kirigami.Units.iconSizes.medium
-                                icon.height: Kirigami.Units.iconSizes.medium
+                                icon.width: Units.iconSizes.medium
+                                icon.height: Units.iconSizes.medium
                                 onClicked: iconSection.pick(modelData.key, iconSection.tint)
                                 QQC2.ToolTip.text: modelData.name
                                 QQC2.ToolTip.visible: hovered
-                                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                                QQC2.ToolTip.delay: Units.toolTipDelay
                             }
                         }
                     }
@@ -466,21 +463,21 @@ QQC2.ApplicationWindow {
                             delegate: QQC2.AbstractButton {
                                 id: swatch
                                 required property var modelData
-                                implicitWidth: Kirigami.Units.iconSizes.medium
+                                implicitWidth: Units.iconSizes.medium
                                 implicitHeight: implicitWidth
                                 text: modelData.name
                                 Accessible.name: modelData.name
                                 onClicked: iconSection.pick(iconSection.glyph || "phone", modelData.color)
                                 QQC2.ToolTip.text: modelData.name
                                 QQC2.ToolTip.visible: hovered
-                                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                                QQC2.ToolTip.delay: Units.toolTipDelay
                                 contentItem: Item {}
                                 background: Rectangle {
                                     radius: width / 2
                                     color: swatch.modelData.color
                                     border.width: iconSection.tint.toLowerCase() === swatch.modelData.color ? 3 : 1
                                     border.color: iconSection.tint.toLowerCase() === swatch.modelData.color
-                                                  ? Kirigami.Theme.highlightColor : Qt.rgba(0, 0, 0, 0.25)
+                                                  ? Theme.highlightColor : Qt.rgba(0, 0, 0, 0.25)
                                 }
                             }
                         }
@@ -506,7 +503,7 @@ QQC2.ApplicationWindow {
                         Layout.fillWidth: true
                         text: "A color on its own picks the phone icon. The taskbar and tray change when you save; a window with this account active closes and reopens for a moment to pick it up."
                         wrapMode: Text.WordWrap
-                        font: Kirigami.Theme.smallFont
+                        font: Theme.smallFont
                         opacity: 0.7
                     }
                 }
@@ -524,9 +521,9 @@ QQC2.ApplicationWindow {
                     GridLayout {
                         Layout.fillWidth: true
                         visible: win.showAdvancedAccount
-                        columns: width > Kirigami.Units.gridUnit * 24 ? 2 : 1
-                        columnSpacing: Kirigami.Units.largeSpacing
-                        rowSpacing: Kirigami.Units.largeSpacing
+                        columns: width > Units.gridUnit * 24 ? 2 : 1
+                        columnSpacing: Units.largeSpacing
+                        rowSpacing: Units.largeSpacing
                         PrefField {
                             label: "Domain"
                             hint: "Leave empty to use the server"
@@ -602,20 +599,20 @@ QQC2.ApplicationWindow {
                 }
             }
 
-            Kirigami.PlaceholderMessage {
+            Placeholder {
                 Layout.fillWidth: true
-                Layout.topMargin: Kirigami.Units.gridUnit
+                Layout.topMargin: Units.gridUnit
                 visible: !win.draft.accounts || win.draft.accounts.length === 0
                 icon.name: "user-identity"
                 text: "No accounts yet"
                 explanation: "Add the SIP account your provider or PBX gave you."
             }
 
-            Kirigami.PromptDialog {
+            PromptDialog {
                 id: confirmDelete
                 title: "Delete " + win.accTitle(win.acc()) + "?"
                 subtitle: "It's removed when you save."
-                standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+                standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
                 onAccepted: {
                     win.draft.accounts.splice(win.selAcc, 1)
                     win.selAcc = Math.max(0, win.selAcc - 1)
@@ -637,7 +634,7 @@ QQC2.ApplicationWindow {
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 2
-                    columnSpacing: Kirigami.Units.largeSpacing
+                    columnSpacing: Units.largeSpacing
                     QQC2.Label { text: "Speaker" }
                     QQC2.ComboBox { wheelEnabled: false;
                         Layout.fillWidth: true
@@ -658,8 +655,8 @@ QQC2.ApplicationWindow {
                         visible: win.phone.sourceLabel !== ""
                         Layout.fillWidth: true
                         text: "Using " + win.phone.sourceLabel + " from the command line"
-                        font: Kirigami.Theme.smallFont
-                        color: Kirigami.Theme.neutralTextColor
+                        font: Theme.smallFont
+                        color: Theme.neutralTextColor
                         wrapMode: Text.Wrap
                     }
                     QQC2.Label { text: "Ring on" }
@@ -693,7 +690,7 @@ QQC2.ApplicationWindow {
                 RowLayout {
                     QQC2.Label { text: "Volume" }
                     QQC2.Slider { wheelEnabled: false;
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 12
+                        Layout.preferredWidth: Units.gridUnit * 12
                         from: 0; to: 100; stepSize: 5
                         value: win.draft.ringVolume ?? 100
                         onMoved: win.set("ringVolume", Math.round(value))
@@ -720,10 +717,10 @@ QQC2.ApplicationWindow {
                 }
                 QQC2.Label {
                     Layout.fillWidth: true
-                    Layout.leftMargin: Kirigami.Units.gridUnit * 1.5
+                    Layout.leftMargin: Units.gridUnit * 1.5
                     text: "Turn off with a headset if your voice sounds clipped to the other side."
                     wrapMode: Text.WordWrap
-                    font: Kirigami.Theme.smallFont
+                    font: Theme.smallFont
                     opacity: 0.7
                 }
                 QQC2.CheckBox {
@@ -756,7 +753,7 @@ QQC2.ApplicationWindow {
                 RowLayout {
                     QQC2.ComboBox { wheelEnabled: false;
                         id: aa
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 14
+                        Layout.preferredWidth: Units.gridUnit * 14
                         textRole: "t"
                         model: [{ t: "Off", v: "off" }, { t: "All calls", v: "all" }, { t: "When the server asks (intercom)", v: "header" }]
                         currentIndex: Math.max(0, ["off", "all", "header"].indexOf(win.draft.autoAnswer || "off"))
@@ -789,7 +786,7 @@ QQC2.ApplicationWindow {
                 title: "Keypad (DTMF)"
                 description: "How key presses reach the other side during a call. Auto works with almost every system."
                 QQC2.ComboBox { wheelEnabled: false;
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 14
+                    Layout.preferredWidth: Units.gridUnit * 14
                     model: ["Auto", "RFC 2833", "SIP INFO", "In-band audio"]
                     currentIndex: Math.max(0, ["auto", "rfc2833", "info", "inband"].indexOf(win.draft.dtmfMethod || "auto"))
                     onActivated: i => win.set("dtmfMethod", ["auto", "rfc2833", "info", "inband"][i])
@@ -807,7 +804,7 @@ QQC2.ApplicationWindow {
                 }
                 RowLayout {
                     enabled: limitOn.checked
-                    Layout.leftMargin: Kirigami.Units.gridUnit * 1.5
+                    Layout.leftMargin: Units.gridUnit * 1.5
                     QQC2.Label { text: "End calls" }
                     QQC2.SpinBox { wheelEnabled: false;
                         id: limitMinutes
@@ -842,7 +839,7 @@ QQC2.ApplicationWindow {
                     Layout.fillWidth: true
                     QQC2.ComboBox { wheelEnabled: false;
                         id: fwd
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 11
+                        Layout.preferredWidth: Units.gridUnit * 11
                         model: ["Off", "Always", "When busy", "When not answered"]
                         currentIndex: Math.max(0, ["off", "always", "busy", "noanswer"].indexOf(win.draft.forwarding || "off"))
                         onActivated: i => win.set("forwarding", ["off", "always", "busy", "noanswer"][i])
@@ -872,7 +869,7 @@ QQC2.ApplicationWindow {
                 description: "Turn calls away before they ring."
                 last: true
                 QQC2.ComboBox { wheelEnabled: false;
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 14
+                    Layout.preferredWidth: Units.gridUnit * 14
                     model: ["No", "From other domains", "All calls"]
                     currentIndex: Math.max(0, ["", "otherdomain", "all"].indexOf(win.draft.denyIncoming || ""))
                     onActivated: i => win.set("denyIncoming", ["", "otherdomain", "all"][i])
@@ -957,7 +954,7 @@ QQC2.ApplicationWindow {
                 PrefField {
                     label: "STUN server"
                     QQC2.TextField {
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 18
+                        Layout.preferredWidth: Units.gridUnit * 18
                         placeholderText: "stun.example.com:3478"
                         text: win.draft.stun || ""
                         onTextEdited: win.set("stun", text.trim())
@@ -981,7 +978,7 @@ QQC2.ApplicationWindow {
                     label: "User agent"
                     hint: "Some providers want a specific one. Leave empty for MegaSIP's."
                     QQC2.TextField {
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 18
+                        Layout.preferredWidth: Units.gridUnit * 18
                         placeholderText: "MegaSIP/0.3.0"
                         text: win.draft.userAgent || ""
                         onTextEdited: win.set("userAgent", text)
@@ -1001,23 +998,23 @@ QQC2.ApplicationWindow {
                 description: "SIP and audio are logged separately so one doesn't drown out the other."
                 GridLayout {
                     columns: 3
-                    columnSpacing: Kirigami.Units.largeSpacing
+                    columnSpacing: Units.largeSpacing
                     QQC2.Label { text: "SIP and calls" }
                     QQC2.ComboBox { wheelEnabled: false;
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 9
+                        Layout.preferredWidth: Units.gridUnit * 9
                         model: win.logLevelNames
                         currentIndex: Math.max(0, win.logLevels.indexOf(win.draft.logSipLevel || "info"))
                         onActivated: i => win.set("logSipLevel", win.logLevels[i])
                     }
-                    QQC2.Label { text: "Debug shows every SIP message"; opacity: 0.7; font: Kirigami.Theme.smallFont }
+                    QQC2.Label { text: "Debug shows every SIP message"; opacity: 0.7; font: Theme.smallFont }
                     QQC2.Label { text: "Audio" }
                     QQC2.ComboBox { wheelEnabled: false;
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 9
+                        Layout.preferredWidth: Units.gridUnit * 9
                         model: win.logLevelNames
                         currentIndex: Math.max(0, win.logLevels.indexOf(win.draft.logAudioLevel || "warn"))
                         onActivated: i => win.set("logAudioLevel", win.logLevels[i])
                     }
-                    QQC2.Label { text: "PulseAudio, devices, echo cancellation"; opacity: 0.7; font: Kirigami.Theme.smallFont }
+                    QQC2.Label { text: "PulseAudio, devices, echo cancellation"; opacity: 0.7; font: Theme.smallFont }
                 }
             }
             PrefSection {
@@ -1051,7 +1048,7 @@ QQC2.ApplicationWindow {
                 PrefField {
                     label: "Venator address"
                     QQC2.TextField {
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 14
+                        Layout.preferredWidth: Units.gridUnit * 14
                         placeholderText: "127.0.0.1:8362"
                         text: win.draft.venatorHost || ""
                         onTextEdited: win.set("venatorHost", text.trim())

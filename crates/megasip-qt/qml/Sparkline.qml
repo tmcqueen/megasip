@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // A small line graph of the last minute of one metric.
 ColumnLayout {
@@ -25,13 +24,13 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        QQC2.Label { text: sp.title; font: Kirigami.Theme.smallFont; opacity: 0.7; Layout.fillWidth: true }
-        QQC2.Label { text: sp.latest.toFixed(sp.latest < 10 ? 1 : 0); font: Kirigami.Theme.smallFont }
+        QQC2.Label { text: sp.title; font: Theme.smallFont; opacity: 0.7; Layout.fillWidth: true }
+        QQC2.Label { text: sp.latest.toFixed(sp.latest < 10 ? 1 : 0); font: Theme.smallFont }
     }
     Canvas {
         id: c
         Layout.fillWidth: true
-        Layout.preferredHeight: Kirigami.Units.gridUnit * 3
+        Layout.preferredHeight: Units.gridUnit * 3
         renderStrategy: Canvas.Immediate
         property int v: sp.version
         onVChanged: requestPaint()
@@ -40,14 +39,14 @@ ColumnLayout {
         onPaint: {
             const ctx = getContext("2d")
             ctx.reset()
-            ctx.fillStyle = Qt.alpha(Kirigami.Theme.textColor, 0.05)
+            ctx.fillStyle = Qt.alpha(Theme.textColor, 0.05)
             ctx.fillRect(0, 0, width, height)
             const vals = sp.values
             if (vals.length < 2) return
             const n = 60
             const step = width / (n - 1)
             const x0 = width - (vals.length - 1) * step
-            ctx.strokeStyle = Kirigami.Theme.highlightColor
+            ctx.strokeStyle = Theme.highlightColor
             ctx.lineWidth = 1.5
             ctx.beginPath()
             for (let i = 0; i < vals.length; i++) {

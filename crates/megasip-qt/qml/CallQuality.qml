@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // Live media statistics per call, with the last minute graphed.
 QQC2.ScrollView {
@@ -38,32 +37,32 @@ QQC2.ScrollView {
         return "bad"
     }
     function mosColor(m) {
-        if (m === null || m === undefined) return Kirigami.Theme.disabledTextColor
-        if (m >= 4.0) return Kirigami.Theme.positiveTextColor
-        if (m >= 3.6) return Kirigami.Theme.neutralTextColor
-        return Kirigami.Theme.negativeTextColor
+        if (m === null || m === undefined) return Theme.disabledTextColor
+        if (m >= 4.0) return Theme.positiveTextColor
+        if (m >= 3.6) return Theme.neutralTextColor
+        return Theme.negativeTextColor
     }
     function kb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB" }
     function dur(s) { const m = Math.floor(s / 60); return m + ":" + String(Math.floor(s % 60)).padStart(2, "0") }
 
     ColumnLayout {
         width: cq.availableWidth
-        spacing: Kirigami.Units.largeSpacing
+        spacing: Units.largeSpacing
 
         // Levels
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.largeSpacing
+            Layout.margins: Units.largeSpacing
+            spacing: Units.largeSpacing
             QQC2.Label { text: "Microphone" }
             QQC2.ProgressBar { Layout.fillWidth: true; from: 0; to: 1; value: cq.quality.mic }
             QQC2.Label { text: "Speaker" }
             QQC2.ProgressBar { Layout.fillWidth: true; from: 0; to: 1; value: cq.quality.speaker }
         }
 
-        Kirigami.PlaceholderMessage {
+        Placeholder {
             Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.gridUnit * 2
+            Layout.topMargin: Units.gridUnit * 2
             visible: cq.ids.length === 0
             icon.name: "call-start"
             text: "No call in progress"
@@ -72,12 +71,12 @@ QQC2.ScrollView {
 
         Repeater {
             model: cq.ids
-            delegate: Kirigami.AbstractCard {
+            delegate: Card {
                 id: card
                 required property var modelData
                 Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.largeSpacing
-                Layout.rightMargin: Kirigami.Units.largeSpacing
+                Layout.leftMargin: Units.largeSpacing
+                Layout.rightMargin: Units.largeSpacing
                 visible: s !== null
                 readonly property var s: cq.statsFor(modelData) || ({ label: "", codec: "", payloadType: 0, srtp: false, durationS: 0, localPort: 0, remote: "",
                     sending: false, mos: null, rFactor: null, rxPackets: 0, rxBytes: 0, txPackets: 0, txBytes: 0, lost: 0, lossPct: 0, jitterMs: 0,
@@ -86,13 +85,13 @@ QQC2.ScrollView {
                 readonly property var h: { cq.historyVersion; return cq.history[modelData] || { jitter: [], loss: [], buffer: [], mos: [] } }
 
                 contentItem: ColumnLayout {
-                    spacing: Kirigami.Units.largeSpacing
+                    spacing: Units.largeSpacing
                     RowLayout {
                         Layout.fillWidth: true
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 0
-                            Kirigami.Heading {
+                            Heading {
                                 level: 3
                                 text: card.s.label + (card.s.ended ? "  (ended)" : "")
                             }
@@ -108,14 +107,14 @@ QQC2.ScrollView {
                             QQC2.Label {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: cq.mosText(card.s.mos)
-                                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 2.2
+                                font.pointSize: Theme.defaultFont.pointSize * 2.2
                                 font.bold: true
                                 color: cq.mosColor(card.s.mos)
                             }
                             QQC2.Label {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: "MOS · " + cq.mosWord(card.s.mos)
-                                font: Kirigami.Theme.smallFont
+                                font: Theme.smallFont
                                 opacity: 0.8
                                 QQC2.ToolTip.text: "Estimated with a simplified E-model (ITU-T G.107) from loss, jitter and buffering. R = "
                                                    + (card.s.rFactor ? card.s.rFactor.toFixed(0) : "—")
@@ -128,8 +127,8 @@ QQC2.ScrollView {
                     GridLayout {
                         Layout.fillWidth: true
                         columns: 6
-                        columnSpacing: Kirigami.Units.largeSpacing
-                        rowSpacing: Kirigami.Units.smallSpacing
+                        columnSpacing: Units.largeSpacing
+                        rowSpacing: Units.smallSpacing
                         Repeater {
                             model: [
                                 ["Received", `${card.s.rxPackets} pkts · ${cq.kb(card.s.rxBytes)}`],
@@ -151,13 +150,13 @@ QQC2.ScrollView {
                                 required property var modelData
                                 Layout.columnSpan: 2
                                 Layout.fillWidth: true
-                                QQC2.Label { text: modelData[0]; opacity: 0.7; Layout.preferredWidth: Kirigami.Units.gridUnit * 8 }
+                                QQC2.Label { text: modelData[0]; opacity: 0.7; Layout.preferredWidth: Units.gridUnit * 8 }
                                 QQC2.Label {
                                     text: modelData[1]
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                    font.family: Theme.fixedWidthFont.family
                                     Layout.fillWidth: true
                                     color: (modelData[0] === "SRTP failures" || modelData[0] === "Underruns") && parseInt(modelData[1]) > 0
-                                           ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.textColor
+                                           ? Theme.neutralTextColor : Theme.textColor
                                 }
                             }
                         }
@@ -165,7 +164,7 @@ QQC2.ScrollView {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.largeSpacing
+                        spacing: Units.largeSpacing
                         Sparkline { Layout.fillWidth: true; title: "Jitter (ms)"; values: card.h.jitter; version: cq.historyVersion; floor: 20 }
                         Sparkline { Layout.fillWidth: true; title: "Loss (%)"; values: card.h.loss; version: cq.historyVersion; floor: 2 }
                         Sparkline { Layout.fillWidth: true; title: "Buffer (ms)"; values: card.h.buffer; version: cq.historyVersion; floor: 120 }
@@ -174,6 +173,6 @@ QQC2.ScrollView {
                 }
             }
         }
-        Item { Layout.preferredHeight: Kirigami.Units.largeSpacing }
+        Item { Layout.preferredHeight: Units.largeSpacing }
     }
 }

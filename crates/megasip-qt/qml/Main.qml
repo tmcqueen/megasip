@@ -2,17 +2,15 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import Qt.labs.platform as Platform
-import org.kde.kirigami as Kirigami
-import org.kde.notification
 import org.megasip
 
-Kirigami.ApplicationWindow {
+QQC2.ApplicationWindow {
     id: root
     title: activeAcc ? "MegaSIP — " + accTitle(activeAcc) : "MegaSIP"
-    width: Kirigami.Units.gridUnit * 21
-    height: Kirigami.Units.gridUnit * 36
-    minimumWidth: Kirigami.Units.gridUnit * 17
-    minimumHeight: Kirigami.Units.gridUnit * 24
+    width: Units.gridUnit * 21
+    height: Units.gridUnit * 36
+    minimumWidth: Units.gridUnit * 17
+    minimumHeight: Units.gridUnit * 24
     visible: !startHidden
     flags: settings.alwaysOnTop ? (Qt.Window | Qt.WindowStaysOnTopHint) : Qt.Window
 
@@ -83,15 +81,9 @@ Kirigami.ApplicationWindow {
         id: phone
         onIncomingCall: (id, name, number) => {
             incomingWindow.showFor(id)
-            ringNote.title = name || number
-            ringNote.text = name ? number : i18nc("@info", "Incoming call")
-            ringNote.callId = id
-            ringNote.sendEvent()
+            notifier.incoming(id, name || number, name ? number : qsTr("Incoming call"))
         }
-        onMissedCall: (name, number) => {
-            const n = missedComponent.createObject(root, { title: i18nc("@title", "Missed call"), text: name ? `${name} (${number})` : number })
-            n.sendEvent()
-        }
+        onMissedCall: (name, number) => notifier.missed(qsTr("Missed call"), name ? `${name} (${number})` : number)
         onErrorMessage: text => {
             errorMessage.text = text
             errorMessage.visible = true
@@ -101,33 +93,19 @@ Kirigami.ApplicationWindow {
     }
 
 
-    Notification {
-        id: ringNote
-        property int callId: 0
-        componentName: "megasip"
-        eventId: "incomingCall"
-        urgency: Notification.CriticalUrgency
-        flags: Notification.Persistent
-        actions: [
-            NotificationAction { label: "Answer"; onActivated: phone.answer(ringNote.callId) },
-            NotificationAction { label: "Decline"; onActivated: phone.reject(ringNote.callId) }
-        ]
-    }
-    Component {
-        id: missedComponent
-        Notification {
-            componentName: "megasip"
-            eventId: "missedCall"
-            iconName: "call-missed"
-            autoDelete: true
-            defaultAction: NotificationAction { onActivated: { root.show(); root.currentTab = 2 } }
-        }
+    Notifier {
+        id: notifier
+        tray: tray
+        onAnswerRequested: id => phone.answer(id)
+        onDeclineRequested: id => phone.reject(id)
+        onMissedClicked: { root.show(); root.currentTab = 2 }
+        onIncomingClicked: root.show()
     }
     Connections {
         target: root
         function onIncomingCallsChanged() {
             if (root.incomingCalls.length === 0) {
-                ringNote.close()
+                notifier.closeIncoming()
                 incomingWindow.close()
             }
         }
@@ -225,7 +203,12 @@ Kirigami.ApplicationWindow {
         // 14: a message in the trace pane; 15: after Clear (trace); 16: after Clear (quality)
         else if (shotStep === 14) { debugWin.openTab(0); debugWin.showMessage("MESSAGE SHOWN BEFORE CLEAR") }
         else if (shotStep === 15) { debugWin.clearAll(); debugWin.openTab(0) }
-        else debugWin.openTab(2)
+        else if (shotStep === 16) debugWin.openTab(2)
+        // 17: the contacts list and the contact editor; 18: an error banner and the transfer dialog
+        else if (shotStep === 17) { debugWin.close(); root.currentTab = 1; contactsPage.editNew("Ada Lovelace", "+15551234567") }
+        else if (shotStep === 18) { contactsPage.closeEditor(); errorMessage.text = "Couldn't reach the server"; errorMessage.visible = true; root.currentTab = 0; transferDialog.openFor(0) }
+        // 19: the "Save your changes?" prompt
+        else { transferDialog.close(); prefs.openPage(1); prefs.dirty = true; prefs.forceClose = false; prefs.close() }
     }
 
     IncomingWindow {
@@ -245,100 +228,92 @@ Kirigami.ApplicationWindow {
 
     Timer { id: errorTimer; interval: 8000; onTriggered: errorMessage.visible = false }
 
-    pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
-    pageStack.initialPage: Kirigami.Page {
-        id: mainPage
-        padding: 0
-        titleDelegate: Item {}
-        globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
 
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: 0
+        StatusBar {
+            Layout.fillWidth: true
+            phone: phone
+            accounts: root.accounts
+            settings: root.settings
+            activeAcc: root.activeAcc
+            pickable: root.pickable
+            inUse: root.inUse
+            accTitle: root.accTitle
+            onMenuOpening: root.refreshInUse()
+            onPreferencesRequested: prefs.openPage()
+            onAccountRequested: prefs.openPage(0)
+        }
 
-            StatusBar {
-                Layout.fillWidth: true
+        InlineMessage {
+            id: errorMessage
+            Layout.fillWidth: true
+            Layout.margins: Units.smallSpacing
+            type: "error"
+            showCloseButton: true
+            visible: false
+        }
+
+        StackLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            currentIndex: root.currentTab
+
+            DialpadPage {
                 phone: phone
-                accounts: root.accounts
+                activeCall: root.selectedCall
                 settings: root.settings
-                activeAcc: root.activeAcc
-                pickable: root.pickable
-                inUse: root.inUse
-                accTitle: root.accTitle
-                onMenuOpening: root.refreshInUse()
-                onPreferencesRequested: prefs.openPage()
-                onAccountRequested: prefs.openPage(0)
+                contacts: root.contacts
+                history: root.history
+                onDialRequested: number => root.dial(number)
             }
-
-            Kirigami.InlineMessage {
-                id: errorMessage
-                Layout.fillWidth: true
-                Layout.margins: Kirigami.Units.smallSpacing
-                type: Kirigami.MessageType.Error
-                showCloseButton: true
-                visible: false
-            }
-
-            StackLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                currentIndex: root.currentTab
-
-                DialpadPage {
-                    phone: phone
-                    activeCall: root.selectedCall
-                    settings: root.settings
-                    contacts: root.contacts
-                    history: root.history
-                    onDialRequested: number => root.dial(number)
-                }
-                ContactsPage {
-                    id: contactsPage
-                    phone: phone
-                    contacts: root.contacts
-                    onDialRequested: number => root.dial(number)
-                }
-                HistoryPage {
-                    phone: phone
-                    history: root.history
-                    accounts: root.accounts
-                    onDialRequested: number => root.dial(number)
-                    onAddContact: (name, number) => { root.currentTab = 1; contactsPage.editNew(name, number) }
-                    visible: StackLayout.isCurrentItem
-                    onVisibleChanged: if (visible) phone.seenMissed()
-                }
-            }
-
-            CallsPanel {
-                Layout.fillWidth: true
+            ContactsPage {
+                id: contactsPage
                 phone: phone
-                calls: root.calls
-                now: root.now
-                selected: root.selectedCall
-                visible: root.calls.length > 0
-                onTransferRequested: id => transferDialog.openFor(id)
-                onQualityRequested: debugWin.openTab(2)
-                formatDuration: root.formatDuration
+                contacts: root.contacts
+                onDialRequested: number => root.dial(number)
             }
+            HistoryPage {
+                phone: phone
+                history: root.history
+                accounts: root.accounts
+                onDialRequested: number => root.dial(number)
+                onAddContact: (name, number) => { root.currentTab = 1; contactsPage.editNew(name, number) }
+                visible: StackLayout.isCurrentItem
+                onVisibleChanged: if (visible) phone.seenMissed()
+            }
+        }
+
+        CallsPanel {
+            Layout.fillWidth: true
+            phone: phone
+            calls: root.calls
+            now: root.now
+            selected: root.selectedCall
+            visible: root.calls.length > 0
+            onTransferRequested: id => transferDialog.openFor(id)
+            onQualityRequested: debugWin.openTab(2)
+            formatDuration: root.formatDuration
         }
     }
 
 
-    footer: Kirigami.NavigationTabBar {
+    footer: NavigationTabBar {
         actions: [
-            Kirigami.Action {
+            QQC2.Action {
                 icon.name: "input-dialpad-symbolic"
                 text: "Dialpad"
                 checked: root.currentTab === 0
                 onTriggered: root.currentTab = 0
             },
-            Kirigami.Action {
+            QQC2.Action {
                 icon.name: "im-user"
                 text: "Contacts"
                 checked: root.currentTab === 1
                 onTriggered: root.currentTab = 1
             },
-            Kirigami.Action {
+            QQC2.Action {
                 icon.name: phone.missedCount > 0 ? "call-missed" : "view-history"
                 text: phone.missedCount > 0 ? `Calls (${phone.missedCount})` : "Calls"
                 checked: root.currentTab === 2

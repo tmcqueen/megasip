@@ -1,11 +1,9 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
-import org.kde.kirigamiaddons.components as Components
 
 // MicroSIP's ring-in box: who's calling, Answer / Decline.
-Kirigami.AbstractApplicationWindow {
+QQC2.ApplicationWindow {
     id: win
     required property var phone
     required property var calls
@@ -30,8 +28,8 @@ Kirigami.AbstractApplicationWindow {
 
     title: "Incoming call"
     flags: Qt.Dialog | Qt.WindowStaysOnTopHint
-    width: Kirigami.Units.gridUnit * 18
-    height: Kirigami.Units.gridUnit * 11
+    width: Units.gridUnit * 18
+    height: Units.gridUnit * 11
     minimumWidth: width
     minimumHeight: height
     maximumWidth: width
@@ -42,18 +40,18 @@ Kirigami.AbstractApplicationWindow {
     QQC2.Pane {
         anchors.fill: parent
         contentItem: ColumnLayout {
-            spacing: Kirigami.Units.smallSpacing
+            spacing: Units.smallSpacing
             RowLayout {
-                spacing: Kirigami.Units.largeSpacing
-                Components.Avatar {
-                    implicitWidth: Kirigami.Units.iconSizes.large
+                spacing: Units.largeSpacing
+                Avatar {
+                    implicitWidth: Units.iconSizes.large
                     implicitHeight: implicitWidth
                     name: win.call ? (win.call.name || win.call.number) : ""
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 0
-                    Kirigami.Heading {
+                    Heading {
                         Layout.fillWidth: true
                         level: 2
                         text: win.call ? (win.call.name || win.call.number) : ""
@@ -69,7 +67,7 @@ Kirigami.AbstractApplicationWindow {
                         Layout.fillWidth: true
                         text: win.accountTitle ? "to " + win.accountTitle : ""
                         visible: text.length > 0
-                        font: Kirigami.Theme.smallFont
+                        font: Theme.smallFont
                         opacity: 0.7
                         elide: Text.ElideRight
                     }
@@ -78,12 +76,12 @@ Kirigami.AbstractApplicationWindow {
             Item { Layout.fillHeight: true }
             RowLayout {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.largeSpacing
+                spacing: Units.largeSpacing
                 QQC2.Button {
                     Layout.fillWidth: true
                     text: "Answer"
                     icon.name: "call-start"
-                    palette.button: Kirigami.Theme.positiveBackgroundColor
+                    palette.button: Theme.positiveBackgroundColor
                     onClicked: { if (win.call) win.phone.answer(win.call.id); win.close() }
                     focus: true
                 }
@@ -91,7 +89,7 @@ Kirigami.AbstractApplicationWindow {
                     Layout.fillWidth: true
                     text: "Decline"
                     icon.name: "call-stop"
-                    palette.button: Kirigami.Theme.negativeBackgroundColor
+                    palette.button: Theme.negativeBackgroundColor
                     onClicked: { if (win.call) win.phone.reject(win.call.id); win.close() }
                 }
             }

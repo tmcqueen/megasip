@@ -1,4 +1,6 @@
-// Creates a QApplication (so Plasma's desktop QtQuick style applies) and loads the QML UI.
+// Creates a QApplication (widgets, for the tray menu and Plasma's desktop QtQuick style)
+// and loads the QML UI. Nothing here needs KDE Frameworks: on Plasma the org.kde.desktop
+// style is used when it's installed, Fusion elsewhere on Linux, and Fluent on Windows.
 #include "app.h"
 
 #include <QApplication>
@@ -12,9 +14,12 @@
 #include <QWindow>
 #include <QTimer>
 #include <QImage>
+#include <QPalette>
 
-#include <KLocalizedQmlContext>
-#include <KLocalizedString>
+#include <QFileInfo>
+#include <QFontDatabase>
+#include <QPixmap>
+#include <QQuickImageProvider>
 
 #include <algorithm>
 #include <utility>
@@ -22,6 +27,66 @@
 static QString fromRust(rust::Str s)
 {
     return QString::fromUtf8(s.data(), s.size());
+}
+
+// image://icon/<name>: a themed icon as an image, for the QML Icon item.
+class IconProvider : public QQuickImageProvider
+{
+public:
+    IconProvider()
+        : QQuickImageProvider(QQuickImageProvider::Pixmap)
+    {
+    }
+    QPixmap requestPixmap(const QString &id, QSize *size, const QSize &requested) override
+    {
+        const QSize want(requested.width() > 0 ? requested.width() : 32, requested.height() > 0 ? requested.height() : 32);
+        QPixmap px = QIcon::fromTheme(id).pixmap(want);
+        if (px.isNull()) {
+            px = QPixmap(want);
+            px.fill(Qt::transparent);
+        }
+        if (size) {
+            *size = px.size();
+        }
+        return px;
+    }
+};
+
+// The style to use when QT_QUICK_CONTROLS_STYLE doesn't name one.
+static QString defaultStyle(const QQmlApplicationEngine &engine)
+{
+#ifdef Q_OS_WIN
+    Q_UNUSED(engine);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    return QStringLiteral("FluentWinUI3");
+#else
+    return QStringLiteral("Windows");
+#endif
+#else
+    // Plasma's own style (qqc2-desktop-style) follows the desktop theme; it's optional.
+    for (const QString &dir : engine.importPathList()) {
+        if (QFileInfo::exists(dir + QStringLiteral("/org/kde/desktop/qmldir"))) {
+            return QStringLiteral("org.kde.desktop");
+        }
+    }
+    return QStringLiteral("Fusion");
+#endif
+}
+
+// MegaSIP bundles the Breeze icons it uses (as :/icons/megasip-light and -dark). Where the
+// desktop has no icon theme (Windows), they're the theme; elsewhere they fill in names the
+// desktop's theme lacks.
+static void setUpIcons()
+{
+    QIcon::setThemeSearchPaths(QIcon::themeSearchPaths() << QStringLiteral(":/icons"));
+    const QColor window = QGuiApplication::palette().color(QPalette::Window);
+    const QString ours = window.lightness() < 128 ? QStringLiteral("megasip-dark") : QStringLiteral("megasip-light");
+    const QString current = QIcon::themeName();
+    if (current.isEmpty() || current == QStringLiteral("hicolor")) {
+        QIcon::setThemeName(ours);
+    } else {
+        QIcon::setFallbackThemeName(ours);
+    }
 }
 
 static QIcon iconFor(const QString &path)
@@ -78,16 +143,17 @@ int32_t run_qt_app(rust::Str app_id, rust::Str icon_path, bool start_hidden)
     QApplication::setOrganizationDomain(QStringLiteral("megasip.org"));
     QApplication::setDesktopFileName(fromRust(app_id));
     QApplication app(argc, argv);
+    setUpIcons();
     QApplication::setWindowIcon(iconFor(fromRust(icon_path)));
     QApplication::setQuitOnLastWindowClosed(false);
 
-    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
-        QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
-    }
-
-    KLocalizedString::setApplicationDomain("megasip");
     QQmlApplicationEngine engine;
-    KLocalization::setupLocalizedContext(&engine);
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+        QQuickStyle::setStyle(defaultStyle(engine));
+    }
+    engine.addImageProvider(QStringLiteral("icon"), new IconProvider);
+    engine.rootContext()->setContextProperty(QStringLiteral("fixedFontFamily"),
+                                             QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
     engine.rootContext()->setContextProperty(QStringLiteral("startHidden"), start_hidden);
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
@@ -101,7 +167,7 @@ int32_t run_qt_app(rust::Str app_id, rust::Str icon_path, bool start_hidden)
         auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         if (win) {
             win->show();
-            const int steps = 17;
+            const int steps = 20;
             for (int step = 0; step < steps; ++step) {
                 QTimer::singleShot(2500 + step * 1200, win, [win, step]() { win->setProperty("shotStep", step); });
                 QTimer::singleShot(3200 + step * 1200, win, [step, shot]() {

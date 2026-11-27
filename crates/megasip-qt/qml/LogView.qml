@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
-import org.kde.kitemmodels as KItemModels
 
 // Recent log events, filterable by category, level and text.
 ColumnLayout {
@@ -16,16 +14,16 @@ ColumnLayout {
     readonly property var levelRank: ({ ERROR: 1, WARN: 2, INFO: 3, DEBUG: 4, TRACE: 5 })
     readonly property var levelKeys: ["error", "warn", "info", "debug", "trace"]
     function levelColor(l) {
-        if (l === "ERROR") return Kirigami.Theme.negativeTextColor
-        if (l === "WARN") return Kirigami.Theme.neutralTextColor
-        if (l === "INFO") return Kirigami.Theme.textColor
-        return Kirigami.Theme.disabledTextColor
+        if (l === "ERROR") return Theme.negativeTextColor
+        if (l === "WARN") return Theme.neutralTextColor
+        if (l === "INFO") return Theme.textColor
+        return Theme.disabledTextColor
     }
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.margins: Kirigami.Units.smallSpacing
-        Kirigami.SearchField {
+        Layout.margins: Units.smallSpacing
+        SearchField {
             id: search
             Layout.fillWidth: true
             placeholderText: "Search logs"
@@ -57,57 +55,60 @@ ColumnLayout {
         ListView {
             id: list
             clip: true
-            model: KItemModels.KSortFilterProxyModel {
+            model: FilterModel {
                 id: proxy
-                sourceModel: lv.logs
-                filterRowCallback: function (row, parent) {
-                    const r = lv.logs.get(row)
+                model: lv.logs
+                accept: r => {
                     if (cat.currentIndex === 1 && r.category !== "sip") return false
                     if (cat.currentIndex === 2 && r.category !== "audio") return false
                     if ((lv.levelRank[r.level] || 3) > level.currentIndex + 1) return false
                     const t = search.text.trim().toLowerCase()
                     return !t || r.message.toLowerCase().includes(t) || r.target.toLowerCase().includes(t)
                 }
+                delegate: logDelegate
             }
             onCountChanged: if (follow.checked) positionViewAtEnd()
-            delegate: QQC2.ItemDelegate {
-                id: row
-                required property var model
-                width: ListView.view.width
-                onClicked: follow.checked = false
-                contentItem: RowLayout {
-                    spacing: Kirigami.Units.smallSpacing
-                    QQC2.Label {
-                        Layout.alignment: Qt.AlignTop
-                        text: lv.fmtTime(row.model.t)
-                        font: Kirigami.Theme.smallFont
-                        opacity: 0.7
-                    }
-                    QQC2.Label {
-                        Layout.alignment: Qt.AlignTop
-                        Layout.preferredWidth: Kirigami.Units.gridUnit * 3
-                        text: row.model.level
-                        color: lv.levelColor(row.model.level)
-                        font.family: Kirigami.Theme.fixedWidthFont.family
-                        font.bold: row.model.level === "ERROR" || row.model.level === "WARN"
-                    }
-                    QQC2.Label {
-                        Layout.alignment: Qt.AlignTop
-                        text: row.model.category === "audio" ? "audio" : "sip"
-                        font: Kirigami.Theme.smallFont
-                        color: row.model.category === "audio" ? Kirigami.Theme.visitedLinkColor : Kirigami.Theme.linkColor
-                    }
-                    QQC2.Label {
-                        Layout.fillWidth: true
-                        text: `<span style="opacity:0.6">${row.model.target}</span>  ${row.model.message.replace(/&/g, "&amp;").replace(/</g, "&lt;")}`
-                        textFormat: Text.StyledText
-                        wrapMode: Text.Wrap
+            Component {
+                id: logDelegate
+                QQC2.ItemDelegate {
+                    id: row
+                    required property var model
+                    width: list.width
+                    onClicked: follow.checked = false
+                    contentItem: RowLayout {
+                        spacing: Units.smallSpacing
+                        QQC2.Label {
+                            Layout.alignment: Qt.AlignTop
+                            text: lv.fmtTime(row.model.t)
+                            font: Theme.smallFont
+                            opacity: 0.7
+                        }
+                        QQC2.Label {
+                            Layout.alignment: Qt.AlignTop
+                            Layout.preferredWidth: Units.gridUnit * 3
+                            text: row.model.level
+                            color: lv.levelColor(row.model.level)
+                            font.family: Theme.fixedWidthFont.family
+                            font.bold: row.model.level === "ERROR" || row.model.level === "WARN"
+                        }
+                        QQC2.Label {
+                            Layout.alignment: Qt.AlignTop
+                            text: row.model.category === "audio" ? "audio" : "sip"
+                            font: Theme.smallFont
+                            color: row.model.category === "audio" ? Theme.visitedLinkColor : Theme.linkColor
+                        }
+                        QQC2.Label {
+                            Layout.fillWidth: true
+                            text: `<span style="opacity:0.6">${row.model.target}</span>  ${row.model.message.replace(/&/g, "&amp;").replace(/</g, "&lt;")}`
+                            textFormat: Text.StyledText
+                            wrapMode: Text.Wrap
+                        }
                     }
                 }
             }
-            Kirigami.PlaceholderMessage {
+            Placeholder {
                 anchors.centerIn: parent
-                width: parent.width - Kirigami.Units.gridUnit * 4
+                width: parent.width - Units.gridUnit * 4
                 visible: list.count === 0
                 text: "Nothing logged yet"
                 explanation: "Info and up is kept by default. Pick Debug to capture more from now on."

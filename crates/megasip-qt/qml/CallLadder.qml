@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // Sequence diagram of one dialog (Call-ID): MegaSIP on the left, each remote address it
 // talked to as its own lane, one arrow per message.
@@ -68,12 +67,12 @@ Item {
 
         // ---------------------------------------------------------- dialog picker
         ColumnLayout {
-            QQC2.SplitView.preferredWidth: Kirigami.Units.gridUnit * 17
-            QQC2.SplitView.minimumWidth: Kirigami.Units.gridUnit * 12
+            QQC2.SplitView.preferredWidth: Units.gridUnit * 17
+            QQC2.SplitView.minimumWidth: Units.gridUnit * 12
             spacing: 0
             QQC2.CheckBox {
                 id: callsOnly
-                Layout.margins: Kirigami.Units.smallSpacing
+                Layout.margins: Units.smallSpacing
                 text: "Calls only"
                 checked: true
             }
@@ -104,7 +103,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: ladder.fmtTime(drow.model.t).slice(0, 8) + " · " + drow.model.count + " messages"
                                       + (drow.model.outcome ? " · " + drow.model.outcome : "")
-                                font: Kirigami.Theme.smallFont
+                                font: Theme.smallFont
                                 opacity: 0.7
                                 elide: Text.ElideRight
                             }
@@ -117,7 +116,7 @@ Item {
         // ---------------------------------------------------------- the ladder
         ColumnLayout {
             spacing: 0
-            Kirigami.PlaceholderMessage {
+            Placeholder {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: ladder.rows.length === 0
@@ -130,7 +129,7 @@ Item {
             Item {
                 id: lanesHeader
                 Layout.fillWidth: true
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 2
+                Layout.preferredHeight: Units.gridUnit * 2
                 visible: ladder.rows.length > 0
                 Repeater {
                     model: ladder.lanes
@@ -145,18 +144,18 @@ Item {
                     }
                 }
             }
-            Kirigami.Separator { Layout.fillWidth: true; visible: ladder.rows.length > 0 }
+            Separator { Layout.fillWidth: true; visible: ladder.rows.length > 0 }
 
             QQC2.ScrollView {
                 id: ladderArea
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: ladder.rows.length > 0
-                readonly property real timeCol: Kirigami.Units.gridUnit * 8
+                readonly property real timeCol: Units.gridUnit * 8
                 function laneX(i) {
                     const n = ladder.lanes.length
-                    const left = timeCol + Kirigami.Units.gridUnit * 3
-                    const right = width - Kirigami.Units.gridUnit * 3
+                    const left = timeCol + Units.gridUnit * 3
+                    const right = width - Units.gridUnit * 3
                     return n <= 1 ? left : left + i * (right - left) / (n - 1)
                 }
 
@@ -169,7 +168,7 @@ Item {
                         required property int index
                         required property var modelData
                         width: ListView.view.width
-                        height: Kirigami.Units.gridUnit * 2.2
+                        height: Units.gridUnit * 2.2
                         readonly property int remoteLane: Math.max(1, ladder.lanes.indexOf(modelData.remote))
                         readonly property real x0: ladderArea.laneX(modelData.dir === "out" ? 0 : remoteLane)
                         readonly property real x1: ladderArea.laneX(modelData.dir === "out" ? remoteLane : 0)
@@ -177,7 +176,7 @@ Item {
 
                         Rectangle {
                             anchors.fill: parent
-                            color: Kirigami.Theme.highlightColor
+                            color: Theme.highlightColor
                             opacity: ladder.selectedRow === lrow.index ? 0.25 : (hover.hovered ? 0.1 : 0)
                         }
                         HoverHandler { id: hover }
@@ -187,17 +186,17 @@ Item {
 
                         // Time column: clock time and the gap since the previous message.
                         Column {
-                            x: Kirigami.Units.smallSpacing
+                            x: Units.smallSpacing
                             anchors.verticalCenter: parent.verticalCenter
                             QQC2.Label {
                                 text: ladder.fmtTime(lrow.modelData.t)
-                                font: Kirigami.Theme.smallFont
+                                font: Theme.smallFont
                             }
                             QQC2.Label {
                                 readonly property int gap: lrow.index > 0 ? lrow.modelData.t - ladder.rows[lrow.index - 1].t : 0
                                 text: lrow.index > 0 ? "+" + (gap >= 1000 ? (gap / 1000).toFixed(2) + " s" : gap + " ms") : ""
-                                font: Kirigami.Theme.smallFont
-                                color: gap >= 2000 ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
+                                font: Theme.smallFont
+                                color: gap >= 2000 ? Theme.neutralTextColor : Theme.disabledTextColor
                             }
                         }
 
@@ -209,7 +208,7 @@ Item {
                                 x: ladderArea.laneX(index) - 0.5
                                 width: 1
                                 height: lrow.height
-                                color: Kirigami.Theme.disabledTextColor
+                                color: Theme.disabledTextColor
                                 opacity: 0.6
                             }
                         }
@@ -228,7 +227,7 @@ Item {
                         QQC2.Label {
                             text: lrow.x1 > lrow.x0 ? "▶" : "◀"
                             color: lrow.tint
-                            font: Kirigami.Theme.smallFont
+                            font: Theme.smallFont
                             x: lrow.x1 > lrow.x0 ? lrow.x1 - width + 1 : lrow.x1 - 1
                             y: lrow.height * 0.68 - height / 2
                         }

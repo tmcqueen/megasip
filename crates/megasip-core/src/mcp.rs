@@ -14,11 +14,13 @@ use crate::media::source::Source;
 use crate::media::StreamStats;
 use rmcp::handler::server::{tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{Implementation, ServerCapabilities, ServerConfig};
+mod training;
+
 use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 /// What a set password reads as.
@@ -563,27 +565,37 @@ fn redact_auth(text: &str) -> String {
         .join("\r\n")
 }
 
-// ------------------------------------------------------------------ the controller thread
+// ------------------------------------------------------------------ state
 
-type Job = Box<dyn FnOnce(&mut Core) + Send>;
-
-enum Msg {
-    Engine(Box<Event>),
-    Ipc(String),
-    Timer(Timer),
-    Do(Job),
-}
-
-pub struct Core {
-    ctl: Controller,
-    tx: mpsc::Sender<Msg>,
+/// What the MCP tools keep beside the controller: the event log, per-call records for
+/// quality reports, and the Agent Training board. Lives wherever the controller lives (the
+/// headless thread, or a window's Qt thread), and is fed the same engine events first.
+pub struct McpState {
     events: VecDeque<Value>,
     next_seq: u64,
     calls: BTreeMap<u64, CallRecord>,
-    policy: DialPolicy,
+    pub(crate) training: training::Training,
+    /// The board changed since the window last looked.
+    training_dirty: bool,
 }
 
-impl Core {
+impl Default for McpState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl McpState {
+    pub fn new() -> Self {
+        McpState {
+            events: VecDeque::new(),
+            next_seq: 0,
+            calls: BTreeMap::new(),
+            training: training::Training::default(),
+            training_dirty: false,
+        }
+    }
+
     fn push_event(&mut self, kind: &str, mut body: Value) {
         self.next_seq += 1;
         body["seq"] = json!(self.next_seq);
@@ -604,8 +616,9 @@ impl Core {
         }
     }
 
-    fn on_engine(&mut self, ev: Event) {
-        match &ev {
+    /// An engine event, before the controller handles it.
+    pub fn observe(&mut self, ev: &Event, ctl: &Controller) {
+        match ev {
             Event::Accounts(a) => self.push_event("accounts", json!({ "accounts": a })),
             Event::Call(c) => {
                 self.record(c);
@@ -617,7 +630,7 @@ impl Core {
             }
             Event::Ended { info, missed } => {
                 self.record(info);
-                let fin = self.ctl.hub().and_then(|h| h.ended_stats(info.id));
+                let fin = ctl.hub().and_then(|h| h.ended_stats(info.id));
                 if let Some(r) = self.calls.get_mut(&info.id) {
                     r.live = false;
                     r.missed = *missed;
@@ -634,10 +647,16 @@ impl Core {
                 }
                 self.push_event("dtmf", json!({ "callId": id, "digit": d.to_string() }));
             }
-            // The controller turns it into Out::Error, logged in `drain`.
+            // The controller turns it into Out::Error, which `observe_out` logs.
             Event::Error(_) => {}
         }
-        self.ctl.on_event(ev);
+    }
+
+    /// Something the controller asked its frontend to do.
+    pub fn observe_out(&mut self, o: &Out) {
+        if let Out::Error(e) = o {
+            self.push_event("error", json!({ "text": e }));
+        }
     }
 
     fn prune_ended(&mut self) {
@@ -654,8 +673,9 @@ impl Core {
         }
     }
 
-    fn sample(&mut self) {
-        let Some(h) = self.ctl.hub().cloned() else {
+    /// Take a quality sample of every live call; call about once a second.
+    pub fn sample(&mut self, ctl: &Controller) {
+        let Some(h) = ctl.hub().cloned() else {
             return;
         };
         let (live, _) = h.stats();
@@ -666,24 +686,34 @@ impl Core {
         }
     }
 
-    fn drain(&mut self) {
-        for o in self.ctl.take_outbox() {
-            match o {
-                Out::Error(e) => self.push_event("error", json!({ "text": e })),
-                Out::Schedule { after, timer } => {
-                    let tx = self.tx.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(after);
-                        let _ = tx.send(Msg::Timer(timer));
-                    });
-                }
-                _ => {}
-            }
+    /// The Agent Training board as JSON for the window, if it changed since last asked.
+    pub fn take_training_change(&mut self) -> Option<String> {
+        if !std::mem::take(&mut self.training_dirty) {
+            return None;
         }
+        Some(self.training.to_json().to_string())
     }
 
+    pub(crate) fn training_changed(&mut self) {
+        self.training_dirty = true;
+    }
+}
+
+/// A job for the controller's thread.
+pub type Job = Box<dyn FnOnce(&mut Controller, &mut McpState) + Send>;
+/// Runs a job on the controller's thread; false if that thread is gone.
+pub type Exec = Arc<dyn Fn(Job) -> bool + Send + Sync>;
+
+/// The controller and the MCP state together, for one job.
+pub struct Cx<'a> {
+    ctl: &'a mut Controller,
+    st: &'a mut McpState,
+}
+
+impl Cx<'_> {
     fn live_ids(&self) -> Vec<u64> {
-        self.calls
+        self.st
+            .calls
             .iter()
             .filter(|(_, r)| r.live)
             .map(|(id, _)| *id)
@@ -693,7 +723,7 @@ impl Core {
     /// `id`, or the only live call.
     fn live_call(&self, id: Option<u64>) -> Result<u64, String> {
         match id {
-            Some(id) if self.calls.get(&id).is_some_and(|r| r.live) => Ok(id),
+            Some(id) if self.st.calls.get(&id).is_some_and(|r| r.live) => Ok(id),
             Some(id) => Err(format!("Call {id} isn't in progress")),
             None => match self.live_ids().as_slice() {
                 [one] => Ok(*one),
@@ -708,12 +738,13 @@ impl Core {
     /// `id`, or the only live call, or the most recent one.
     fn any_call(&self, id: Option<u64>) -> Result<u64, String> {
         match id {
-            Some(id) if self.calls.contains_key(&id) => Ok(id),
+            Some(id) if self.st.calls.contains_key(&id) => Ok(id),
             Some(id) => Err(format!(
                 "No call {id} (only the last {MAX_ENDED} ended calls are kept)"
             )),
             None => self.live_call(None).or_else(|_| {
-                self.calls
+                self.st
+                    .calls
                     .iter()
                     .max_by_key(|(_, r)| r.created)
                     .map(|(id, _)| *id)
@@ -732,6 +763,7 @@ impl Core {
             .and_then(|l| l.iter().find(|a| a["id"] == json!(active)).cloned())
             .unwrap_or(Value::Null);
         let calls: Vec<&CallInfo> = self
+            .st
             .calls
             .values()
             .filter(|r| r.live)
@@ -751,7 +783,7 @@ impl Core {
             "source": if src.is_empty() { "microphone".to_string() } else { format!("{src} {detail}").trim().to_string() },
             "dnd": self.ctl.dnd(),
             "autoAnswer": s.auto_answer,
-            "lastEventSeq": self.next_seq,
+            "lastEventSeq": self.st.next_seq,
         })
     }
 
@@ -774,7 +806,7 @@ impl Core {
         match until {
             "registered" => Ok(self.registered().then(|| json!({ "matched": true, "status": self.status() }))),
             "incoming" => {
-                let hit = self.calls.values().find(|r| {
+                let hit = self.st.calls.values().find(|r| {
                     r.live
                         && r.info.direction == "in"
                         && r.info.state == "incoming"
@@ -784,7 +816,7 @@ impl Core {
             }
             "ringing" | "connected" | "ended" | "dtmf" => {
                 let id = self.any_call(call)?;
-                let r = &self.calls[&id];
+                let r = &self.st.calls[&id];
                 let hit = match until {
                     "ringing" => ["ringing", "early", "connected"].iter().any(|s| r.states.contains(*s)),
                     "connected" => r.states.contains("connected"),
@@ -924,9 +956,26 @@ pub struct SettingsPatch {
     pub patch: Value,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TrainingStartArgs {
+    /// Cells per side (default 16, 8 to 32).
+    pub size: Option<i32>,
+    /// Move on its own every this many milliseconds (100 to 2000). Leave out for turn-based.
+    pub tick_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TrainingTurnArgs {
+    /// left, right or straight, relative to the current heading.
+    pub direction: String,
+    /// Cells to move after turning, in turn-based mode (default 1).
+    pub steps: Option<u32>,
+}
+
 #[derive(Clone)]
 pub struct Phone {
-    tx: mpsc::Sender<Msg>,
+    exec: Exec,
+    policy: DialPolicy,
     #[allow(dead_code)]
     tool_router: ToolRouter<Phone>,
 }
@@ -941,14 +990,15 @@ impl Phone {
     /// Run `f` on the controller thread and wait for its answer.
     async fn with<R: Send + 'static>(
         &self,
-        f: impl FnOnce(&mut Core) -> R + Send + 'static,
+        f: impl for<'a> FnOnce(&mut Cx<'a>) -> R + Send + 'static,
     ) -> Result<R, String> {
         let (otx, orx) = tokio::sync::oneshot::channel();
-        self.tx
-            .send(Msg::Do(Box::new(move |c| {
-                let _ = otx.send(f(c));
-            })))
-            .map_err(|_| "MegaSIP's engine has stopped".to_string())?;
+        let sent = (self.exec)(Box::new(move |ctl, st| {
+            let _ = otx.send(f(&mut Cx { ctl, st }));
+        }));
+        if !sent {
+            return Err("MegaSIP's engine has stopped".into());
+        }
         orx.await
             .map_err(|_| "MegaSIP's engine has stopped".to_string())
     }
@@ -962,14 +1012,14 @@ impl Phone {
         let id = self
             .with(move |c| {
                 let id = c.live_call(id)?;
-                f(&mut c.ctl, id);
+                f(c.ctl, id);
                 Ok::<_, String>(id)
             })
             .await??;
         tokio::time::sleep(Duration::from_millis(300)).await;
         let info = self
             .with(move |c| {
-                c.calls
+                c.st.calls
                     .get(&id)
                     .map(|r| json!({ "callId": id, "call": r.info, "ended": !r.live }))
             })
@@ -980,9 +1030,10 @@ impl Phone {
 
 #[tool_router]
 impl Phone {
-    fn new(tx: mpsc::Sender<Msg>) -> Self {
+    pub fn new(exec: Exec, policy: DialPolicy) -> Self {
         Phone {
-            tx,
+            exec,
+            policy,
             tool_router: Self::tool_router(),
         }
     }
@@ -999,9 +1050,9 @@ impl Phone {
     )]
     async fn dial(&self, Parameters(a): Parameters<DialArgs>) -> ToolResult {
         let number = crate::controller::dial_target(&a.number);
+        self.policy.check(&number)?;
         let before = self
             .with(move |c| {
-                c.policy.check(&number)?;
                 if let Some(src) = &a.source {
                     Source::parse(src)?;
                     if !c.live_ids().is_empty() {
@@ -1012,8 +1063,8 @@ impl Phone {
                     }
                 }
                 let acc = c.ctl.active_account().unwrap_or_default().to_string();
-                let before: BTreeSet<u64> = c.calls.keys().copied().collect();
-                let seq = c.next_seq;
+                let before: BTreeSet<u64> = c.st.calls.keys().copied().collect();
+                let seq = c.st.next_seq;
                 c.ctl.dial(&number, &acc);
                 Ok((before, seq))
             })
@@ -1024,12 +1075,13 @@ impl Phone {
             let b = before.clone();
             let found = self
                 .with(move |c| {
-                    let call = c
-                        .calls
-                        .values()
-                        .find(|r| r.info.direction == "out" && !b.contains(&r.info.id))
-                        .map(|r| r.info.clone());
+                    let call =
+                        c.st.calls
+                            .values()
+                            .find(|r| r.info.direction == "out" && !b.contains(&r.info.id))
+                            .map(|r| r.info.clone());
                     let errors: Vec<Value> = c
+                        .st
                         .events
                         .iter()
                         .filter(|e| e["seq"].as_u64().unwrap_or(0) > seq && e["type"] == "error")
@@ -1061,7 +1113,7 @@ impl Phone {
             Some(id) => Some(id),
             None => {
                 self.with(|c| {
-                    c.calls
+                    c.st.calls
                         .values()
                         .find(|r| r.live && r.info.state == "incoming")
                         .map(|r| r.info.id)
@@ -1137,11 +1189,11 @@ impl Phone {
                 let d = d.to_ascii_uppercase();
                 let ok = self
                     .with(move |c| {
-                        if !c.calls.get(&id).is_some_and(|r| r.live) {
+                        if !c.st.calls.get(&id).is_some_and(|r| r.live) {
                             return false;
                         }
                         c.ctl.dtmf(id, d);
-                        if let Some(r) = c.calls.get_mut(&id) {
+                        if let Some(r) = c.st.calls.get_mut(&id) {
                             r.dtmf_tx.push(d);
                         }
                         true
@@ -1160,8 +1212,7 @@ impl Phone {
     #[tool(description = "Blind transfer: send the other party of a call to `target` (SIP REFER).")]
     async fn transfer(&self, Parameters(a): Parameters<TransferArgs>) -> ToolResult {
         let target = crate::controller::dial_target(&a.target);
-        let t = target.clone();
-        self.with(move |c| c.policy.check(&t)).await??;
+        self.policy.check(&target)?;
         self.on_call(a.call_id, move |ctl, id| ctl.transfer(id, &target))
             .await
     }
@@ -1231,15 +1282,15 @@ impl Phone {
         let limit = a.limit.unwrap_or(100).clamp(1, MAX_EVENTS);
         let v = self
             .with(move |c| {
-                let list: Vec<Value> = c
-                    .events
-                    .iter()
-                    .filter(|e| e["seq"].as_u64().unwrap_or(0) > since)
-                    .take(limit)
-                    .cloned()
-                    .collect();
+                let list: Vec<Value> =
+                    c.st.events
+                        .iter()
+                        .filter(|e| e["seq"].as_u64().unwrap_or(0) > since)
+                        .take(limit)
+                        .cloned()
+                        .collect();
                 let next = list.last().and_then(|e| e["seq"].as_u64()).unwrap_or(since);
-                json!({ "next": next, "latest": c.next_seq, "events": list })
+                json!({ "next": next, "latest": c.st.next_seq, "events": list })
             })
             .await?;
         Ok(pretty(&v))
@@ -1251,10 +1302,10 @@ impl Phone {
     async fn call_quality_report(&self, Parameters(a): Parameters<CallArg>) -> ToolResult {
         let v = self
             .with(move |c| {
-                c.sample();
+                c.st.sample(c.ctl);
                 let id = c.any_call(a.call_id)?;
                 Ok::<_, String>(quality_report(
-                    &c.calls[&id],
+                    &c.st.calls[&id],
                     c.ctl.hub().map(|h| h.as_ref()),
                 ))
             })
@@ -1268,7 +1319,7 @@ impl Phone {
     async fn sip_trace(&self, Parameters(a): Parameters<TraceArgs>) -> ToolResult {
         let sip_id = match a.call_id {
             Some(id) => Some(
-                self.with(move |c| c.calls.get(&id).map(|r| r.info.sip_call_id.clone()))
+                self.with(move |c| c.st.calls.get(&id).map(|r| r.info.sip_call_id.clone()))
                     .await?
                     .ok_or(format!("No call {id}"))?,
             ),
@@ -1332,6 +1383,90 @@ impl Phone {
             .await??;
         Ok(pretty(&v))
     }
+
+    #[tool(
+        description = "Agent Training: start a run of a steering exercise shown in MegaSIP's dial pad. A line of cells on a square grid moves forward one cell per step; training_turn turns it left or right relative to its heading. Eating food (*) grows it by one cell and scores a point; hitting the wall or itself ends the run. Turn-based by default (each training_turn moves it); give tick_ms to make it move on its own. Returns the board."
+    )]
+    async fn training_start(&self, Parameters(a): Parameters<TrainingStartArgs>) -> ToolResult {
+        let size = a.size.unwrap_or(training::DEFAULT_SIZE);
+        let tick = a.tick_ms.map(|t| t.clamp(100, 2000));
+        let (report, generation) = self
+            .with(move |c| {
+                c.st.training.start(size, tick);
+                c.st.training_changed();
+                (c.st.training.report(), c.st.training.generation())
+            })
+            .await?;
+        if let Some(ms) = tick {
+            let me = self.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    let going = me
+                        .with(move |c| {
+                            let going = c.st.training.tick(generation);
+                            if going || c.st.training.generation() == generation {
+                                c.st.training_changed();
+                            }
+                            going
+                        })
+                        .await
+                        .unwrap_or(false);
+                    if !going {
+                        break;
+                    }
+                }
+            });
+        }
+        Ok(pretty(&report))
+    }
+
+    #[tool(
+        description = "Agent Training: turn left or right relative to the current heading (or go straight), then move `steps` cells (default 1), stopping early if the run ends. In real-time mode the turn happens on the next tick and steps is ignored. Returns the board."
+    )]
+    async fn training_turn(&self, Parameters(a): Parameters<TrainingTurnArgs>) -> ToolResult {
+        let turn = training::Turn::parse(&a.direction)?;
+        let steps = a.steps.unwrap_or(1).clamp(1, training::MAX_SIZE as u32);
+        let report = self
+            .with(move |c| {
+                let t = &mut c.st.training;
+                if !t.alive() {
+                    return Err("No run in progress: start one with training_start".to_string());
+                }
+                t.turn(turn);
+                if t.tick_ms().is_none() {
+                    for _ in 0..steps {
+                        if !matches!(t.step(), training::Step::Moved | training::Step::Ate) {
+                            break;
+                        }
+                    }
+                }
+                let r = t.report();
+                c.st.training_changed();
+                Ok(r)
+            })
+            .await??;
+        Ok(pretty(&report))
+    }
+
+    #[tool(description = "Agent Training: the board and score as they are now.")]
+    async fn training_state(&self) -> ToolResult {
+        Ok(pretty(&self.with(|c| c.st.training.report()).await?))
+    }
+
+    #[tool(description = "Agent Training: end the run and put the board away.")]
+    async fn training_stop(&self) -> ToolResult {
+        let r = self
+            .with(|c| {
+                c.st.training.stop();
+                c.st.training_changed();
+                c.st.training.report()
+            })
+            .await?;
+        Ok(pretty(
+            &json!({ "stopped": true, "score": r["score"], "best": r["best"] }),
+        ))
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -1343,11 +1478,27 @@ impl ServerHandler for Phone {
     }
 }
 
-// ------------------------------------------------------------------ entry point
+// ------------------------------------------------------------------ entry points
 
-/// Serve MCP on stdin/stdout as account `account_id` until the client goes away. Returns
-/// the exit code; Err if the account couldn't be activated.
+/// The first line a `--mcp` bridge sends a window, before the MCP traffic: what this
+/// session may call.
+#[derive(Debug, Default, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Preamble {
+    megasip_mcp: u32,
+    allow: Vec<String>,
+}
+
+/// Serve MCP on stdin/stdout as account `account_id`, headless, until the client goes away.
+/// Returns the exit code; Err if the account couldn't be activated.
 pub fn run(account_id: String, policy: DialPolicy) -> Result<i32, String> {
+    enum Msg {
+        Engine(Box<Event>),
+        Ipc(String),
+        Timer(Timer),
+        Do(Job),
+        Tick,
+    }
     let (tx, rx) = mpsc::channel::<Msg>();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     crate::ipc::listen();
@@ -1358,6 +1509,15 @@ pub fn run(account_id: String, policy: DialPolicy) -> Result<i32, String> {
                 if tx.send(Msg::Ipc(line)).is_err() {
                     break;
                 }
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(1));
+            if tx.send(Msg::Tick).is_err() {
+                break;
             }
         });
     }
@@ -1390,31 +1550,32 @@ pub fn run(account_id: String, policy: DialPolicy) -> Result<i32, String> {
                 let _ = ready_tx.send(Err(errs.join("; ")));
                 return;
             }
-            let mut core = Core {
-                ctl,
-                tx: ctl_tx,
-                events: VecDeque::new(),
-                next_seq: 0,
-                calls: BTreeMap::new(),
-                policy,
-            };
-            core.drain();
+            let mut st = McpState::new();
             let _ = ready_tx.send(Ok(()));
-            let mut next_tick = Instant::now() + Duration::from_secs(1);
             loop {
-                let wait = next_tick.saturating_duration_since(Instant::now());
-                match rx.recv_timeout(wait) {
-                    Ok(Msg::Engine(ev)) => core.on_engine(*ev),
-                    Ok(Msg::Ipc(line)) => core.ctl.on_ipc(&line),
-                    Ok(Msg::Timer(t)) => core.ctl.on_timer(t),
-                    Ok(Msg::Do(job)) => job(&mut core),
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        core.sample();
-                        next_tick = (next_tick + Duration::from_secs(1)).max(Instant::now());
+                match rx.recv() {
+                    Ok(Msg::Engine(ev)) => {
+                        st.observe(&ev, &ctl);
+                        ctl.on_event(*ev);
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(Msg::Ipc(line)) => ctl.on_ipc(&line),
+                    Ok(Msg::Timer(t)) => ctl.on_timer(t),
+                    Ok(Msg::Do(job)) => job(&mut ctl, &mut st),
+                    Ok(Msg::Tick) => st.sample(&ctl),
+                    Err(_) => break,
                 }
-                core.drain();
+                for o in ctl.take_outbox() {
+                    st.observe_out(&o);
+                    if let Out::Schedule { after, timer } = o {
+                        let tx = ctl_tx.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(after);
+                            let _ = tx.send(Msg::Timer(timer));
+                        });
+                    }
+                }
+                // Nobody draws the board here; the tools read it as text.
+                let _ = st.take_training_change();
             }
         })
         .map_err(|e| e.to_string())?;
@@ -1427,7 +1588,14 @@ pub fn run(account_id: String, policy: DialPolicy) -> Result<i32, String> {
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
-    let phone = Phone::new(tx.clone());
+    let exec_tx = std::sync::Mutex::new(tx.clone());
+    let exec: Exec = Arc::new(move |job| {
+        exec_tx
+            .lock()
+            .map(|t| t.send(Msg::Do(job)).is_ok())
+            .unwrap_or(false)
+    });
+    let phone = Phone::new(exec, policy);
     let code = rt.block_on(async move {
         match phone.serve(rmcp::transport::stdio()).await {
             Ok(service) => {
@@ -1441,9 +1609,155 @@ pub fn run(account_id: String, policy: DialPolicy) -> Result<i32, String> {
         }
     });
     // The client went away: hang up, un-register, and exit (quit doesn't return).
-    let _ = tx.send(Msg::Do(Box::new(|c| c.ctl.quit())));
+    let _ = tx.send(Msg::Do(Box::new(|ctl, _| ctl.quit())));
     std::thread::sleep(Duration::from_secs(3));
     Ok(code)
+}
+
+fn endpoint_name(pid: u32) -> std::io::Result<interprocess::local_socket::Name<'static>> {
+    use interprocess::local_socket::{GenericFilePath, ToFsName};
+    crate::ipc::mcp_path_for(pid).to_fs_name::<GenericFilePath>()
+}
+
+/// In a window: accept MCP sessions from `megasip --mcp` bridges on this process's MCP
+/// endpoint, one at a time, running the tools through `exec` on the window's thread.
+pub fn serve_window(exec: Exec) {
+    std::thread::Builder::new()
+        .name("mcp-listener".into())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::warn!("mcp: no runtime for the window's endpoint: {e}");
+                    return;
+                }
+            };
+            rt.block_on(listen_window(exec));
+        })
+        .ok();
+}
+
+async fn listen_window(exec: Exec) {
+    use interprocess::local_socket::{tokio::prelude::*, ListenerOptions};
+    use tokio::io::AsyncBufReadExt;
+    let path = crate::ipc::mcp_path_for(std::process::id());
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(&path);
+    let listener = match endpoint_name(std::process::id())
+        .and_then(|n| ListenerOptions::new().name(n).create_tokio())
+    {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!("mcp: can't listen on {}: {e}", path.display());
+            return;
+        }
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    tracing::debug!("mcp: window accepts agents on {}", path.display());
+    loop {
+        let conn = match listener.accept().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("mcp: accept failed: {e}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+        let (rd, wr) = tokio::io::split(conn);
+        let mut rd = tokio::io::BufReader::new(rd);
+        let mut first = String::new();
+        let pre = match tokio::time::timeout(Duration::from_secs(5), rd.read_line(&mut first)).await
+        {
+            Ok(Ok(n)) if n > 0 => serde_json::from_str::<Preamble>(first.trim()).ok(),
+            _ => None,
+        };
+        let Some(pre) = pre.filter(|p| p.megasip_mcp == 1) else {
+            tracing::warn!(
+                "mcp: dropped a connection that didn't start like a megasip --mcp bridge"
+            );
+            continue;
+        };
+        tracing::info!("mcp: an agent connected to this window");
+        let phone = Phone::new(exec.clone(), DialPolicy { allow: pre.allow });
+        // One session at a time: the next bridge waits until this one is done.
+        match phone.serve((rd, wr)).await {
+            Ok(service) => {
+                let _ = service.waiting().await;
+            }
+            Err(e) => tracing::warn!("mcp: session failed to start: {e}"),
+        }
+        tracing::info!("mcp: the agent disconnected");
+        // Put away anything the agent had on screen.
+        exec(Box::new(|_, st| {
+            if st.training.visible() {
+                st.training.stop();
+                st.training_changed();
+            }
+        }));
+    }
+}
+
+/// `megasip --mcp -a foo` while the window with pid `pid` has foo: carry the MCP session
+/// between stdin/stdout and that window. Returns when either side closes.
+pub fn bridge(pid: u32, policy: &DialPolicy) -> Result<(), String> {
+    use interprocess::local_socket::{prelude::*, Stream};
+    use std::io::{Read, Write};
+    let name = endpoint_name(pid).map_err(|e| e.to_string())?;
+    let conn = Arc::new(Stream::connect(name).map_err(|e| e.to_string())?);
+    let (mut rd, wr) = (&*conn, conn.clone());
+    let pre = serde_json::to_string(&Preamble {
+        megasip_mcp: 1,
+        allow: policy.allow.clone(),
+    })
+    .unwrap_or_default();
+    (&*wr)
+        .write_all(format!("{pre}\n").as_bytes())
+        .map_err(|e| e.to_string())?;
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdin.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if (&*wr)
+                        .write_all(&buf[..n])
+                        .and_then(|_| (&*wr).flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        // The client is gone: exiting closes the connection, which ends the session.
+        drop(wr);
+        std::process::exit(0);
+    });
+    let mut stdout = std::io::stdout();
+    let mut buf = [0u8; 8192];
+    loop {
+        match rd.read(&mut buf) {
+            Ok(0) | Err(_) => return Ok(()),
+            Ok(n) => {
+                if stdout
+                    .write_all(&buf[..n])
+                    .and_then(|_| stdout.flush())
+                    .is_err()
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

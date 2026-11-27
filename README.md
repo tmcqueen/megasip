@@ -59,8 +59,8 @@ with Qt off `PATH` and screenshotting every screen.
 
 **To get a build:** open the latest run of the CI workflow under the repository's Actions
 tab and download the `MegaSIP-<version>-windows-x64` artifact. Unzip it anywhere and run
-`megasip.exe`; nothing needs installing (the Visual C++ runtime is included). Pushing a tag
-such as `v0.5.1` also attaches the zip to a GitHub release. There is no installer yet, so
+`megasip.exe`; nothing needs installing (the Visual C++ runtime is included). Releases
+carry the same zip (see [Releases](#releases)). There is no installer yet, so
 there's no Start menu entry, `sip:`/`tel:` link handling or start at login on Windows.
 
 Building on Linux for Windows isn't practical: cxx-qt runs the target Qt's `qmake`, and a
@@ -70,10 +70,24 @@ To build the app on Windows yourself, install Rust and Qt 6.10 for MSVC (with Qt
 Qt's `bin` on `PATH`, and run `cargo build --release -p megasip-qt`; `windeployqt` gathers
 the DLLs next to `target\release\megasip.exe`.
 
+### Releases
+
+Each [GitHub release](https://github.com/tmcqueen/megasip/releases) carries the Windows zip
+and, for both x86_64 and aarch64 (arm64) Linux, a `.deb`, an `.rpm` and a `.tgz`. The
+Linux packages are built on Debian 13 and install on Debian 13 or newer, Ubuntu 26.04 or newer and Fedora
+43+ (CI installs and starts each one on Debian 13, Ubuntu 26.04 and Fedora 43). The `.tgz`
+holds the binary and an `install.sh` that installs it into `~/.local` (or `/usr/local`
+with `sudo`); it needs Qt installed by hand, which its `README.md` lists.
+
+The Release workflow (`.github/workflows/release.yml`) builds them when a `v*` tag is
+pushed and attaches them to that tag's release, creating it if needed. To build an
+existing tag again, for example when its files are missing, open Actions > Release > Run
+workflow and give it the tag; files of the same name on the release are replaced.
+
 ### Packaging: .deb and .rpm only, no Flatpak or Snap
 
-MegaSIP will be packaged as `.deb` (Debian, Ubuntu) and `.rpm` (Fedora), not as a Flatpak
-or Snap. The reasons:
+MegaSIP is packaged as `.deb` (Debian, Ubuntu) and `.rpm` (Fedora), plus a plain `.tgz`,
+not as a Flatpak or Snap. The reasons:
 
 - **One account per window depends on process IDs.** Each window is its own process. The
   account locks in `megasip.db` and the IPC sockets (`megasip-<pid>.sock`) tell windows

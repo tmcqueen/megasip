@@ -1,0 +1,25 @@
+[package]
+name = "megasip-qt"
+description = "A KDE/Wayland voice-only port of the MicroSIP softphone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "megasip"
+path = "src/main.rs"
+
+[dependencies]
+megasip-core.workspace = true
+cxx.workspace = true
+cxx-qt.workspace = true
+cxx-qt-lib.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+dirs.workspace = true
+ctrlc.workspace = true
+rusqlite.workspace = true
+
+[build-dependencies]
+cxx-qt-build.workspace = true

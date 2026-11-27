@@ -43,6 +43,18 @@ megasip
 `install.sh` also installs the desktop entry, icon and notification config, and
 registers MegaSIP for `sip:`/`tel:` links where no other app handles them.
 
+### Code layout
+
+The repository is a Cargo workspace:
+
+- `crates/megasip-core`: everything that doesn't depend on a GUI toolkit. That is the SIP
+  engine, media, settings, the account lock table, IPC between windows, secrets, logging and
+  the headless `--cli` mode.
+- `crates/megasip-qt`: the Qt/QML app (the `megasip` binary), with the cxx-qt bridge, `cpp/` and
+  `qml/`.
+
+Build and test from the repository root as before; `cargo test` covers both crates.
+
 ### Packaging: .deb and .rpm only, no Flatpak or Snap
 
 MegaSIP will be packaged as `.deb` (Debian, Ubuntu) and `.rpm` (Fedora), not as a Flatpak
@@ -161,7 +173,7 @@ anything past 10 minutes is cut.
 ### Headless
 
 `megasip --cli -a <account> [--source …]` runs one account with no window: commands on
-stdin, events as JSON lines on stdout (see `src/cli.rs`). It refuses to start (exit code 2)
+stdin, events as JSON lines on stdout (see `crates/megasip-core/src/cli.rs`). It refuses to start (exit code 2)
 without `-a`, or if the account is active elsewhere. Its calls are saved to that account's
 history.
 

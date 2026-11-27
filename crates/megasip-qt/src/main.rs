@@ -1,18 +1,13 @@
 //! MegaSIP: a voice-only port of MicroSIP for KDE Plasma.
 
-mod accounticon;
 mod appcpp;
 mod bridge;
-mod cli;
-mod config;
-mod db;
-mod debug;
-mod engine;
-mod ipc;
-mod logging;
-mod media;
-mod secrets;
-mod store;
+
+// The toolkit-independent modules live in `megasip-core`; re-exported here so this crate's
+// code keeps addressing them as `crate::config`, `crate::engine` and so on.
+pub use megasip_core::{
+    accounticon, cli, config, db, debug, engine, ipc, logging, media, secrets, store, SOURCE,
+};
 
 use std::sync::OnceLock;
 
@@ -22,8 +17,6 @@ pub static START_ACCOUNT: OnceLock<String> = OnceLock::new();
 pub static START_DIAL: OnceLock<String> = OnceLock::new();
 /// An error to show in the window once it is up.
 pub static START_ERROR: OnceLock<String> = OnceLock::new();
-/// `--source`: what to send instead of the microphone.
-pub static SOURCE: OnceLock<media::source::Source> = OnceLock::new();
 
 const HELP: &str = "MegaSIP — SIP softphone
 

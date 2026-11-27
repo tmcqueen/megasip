@@ -1541,17 +1541,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
-name = "megasip"
-version = "0.3.0"
+name = "megasip-core"
+version = "0.3.1"
 dependencies = [
  "bytes",
  "chrono",
  "cpal",
- "ctrlc",
- "cxx",
- "cxx-qt",
- "cxx-qt-build",
- "cxx-qt-lib",
  "dirs",
  "lewton",
  "rand 0.8.8",
@@ -1570,6 +1565,23 @@ dependencies = [
  "tracing-subscriber",
  "venator",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "megasip-qt"
+version = "0.3.1"
+dependencies = [
+ "ctrlc",
+ "cxx",
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
+ "dirs",
+ "megasip-core",
+ "rusqlite",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

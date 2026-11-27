@@ -171,7 +171,7 @@ impl Engine {
     }
 
     fn srtp_mode(&self, acc: &str) -> SrtpMode {
-        SrtpMode::from_str(
+        SrtpMode::parse(
             self.accs
                 .get(acc)
                 .map(|a| a.cfg.srtp.as_str())

@@ -50,14 +50,45 @@ pub fn open_at(path: &Path) -> Result<Connection> {
     Ok(c)
 }
 
-/// The kernel's start time of a process (field 22 of /proc/<pid>/stat), which tells a live
-/// process apart from a later one that reused its PID.
+/// When a process started, which tells a live process apart from a later one that reused
+/// its PID. None when no such process is running.
+///
+/// Linux: the kernel's start time (field 22 of /proc/<pid>/stat).
+#[cfg(not(windows))]
 pub fn proc_start(pid: u32) -> Option<i64> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // The command name (field 2) can contain spaces and parentheses; fields after it follow
     // the last ')'. Field 3 is the first one there, so field 22 is index 19.
     let rest = &stat[stat.rfind(')')? + 1..];
     rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// Windows: the creation time from `GetProcessTimes`, in 100 ns units since 1601.
+#[cfg(windows)]
+pub fn proc_start(pid: u32) -> Option<i64> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    // SAFETY: plain Win32 calls on a handle we open and close here; the out-pointers are
+    // to locals that outlive the calls.
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut code = 0u32;
+        let running = GetExitCodeProcess(h, &mut code) != 0 && code == STILL_ACTIVE as u32;
+        let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+        let ok = GetProcessTimes(h, &mut created, &mut exited, &mut kernel, &mut user) != 0;
+        CloseHandle(h);
+        (running && ok)
+            .then_some(((created.dwHighDateTime as i64) << 32) | created.dwLowDateTime as i64)
+    }
 }
 
 fn me() -> (u32, i64) {
@@ -246,11 +277,51 @@ mod tests {
         }
     }
 
+    /// Another live process, for the lock to see: killed when dropped.
+    struct Other(std::process::Child);
+
+    impl Other {
+        fn spawn() -> Self {
+            #[cfg(windows)]
+            let child = std::process::Command::new("ping")
+                .args(["-n", "30", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .spawn();
+            #[cfg(not(windows))]
+            let child = std::process::Command::new("sleep").arg("30").spawn();
+            Other(child.expect("spawn a helper process"))
+        }
+
+        fn id(&self) -> (u32, i64) {
+            let pid = self.0.id();
+            (pid, proc_start(pid).expect("the helper is running"))
+        }
+    }
+
+    impl Drop for Other {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn proc_start_tells_live_from_gone() {
+        let start = proc_start(std::process::id()).expect("this process");
+        assert_eq!(proc_start(std::process::id()), Some(start), "stable");
+        let other = Other::spawn();
+        let pid = other.0.id();
+        assert!(proc_start(pid).is_some());
+        drop(other);
+        assert_eq!(proc_start(pid), None, "an exited process has no start time");
+    }
+
     #[test]
     fn acquire_is_exclusive() {
         let (mut c, p) = temp_db();
         assert_eq!(acquire_as(&mut c, me(), "a").unwrap(), Ok(()));
-        let init = (1, proc_start(1).expect("pid 1 is readable"));
+        let other = Other::spawn();
+        let init = other.id();
         assert_eq!(
             acquire_as(&mut c, init, "a").unwrap(),
             Err(std::process::id())
@@ -275,8 +346,13 @@ mod tests {
     #[test]
     fn stale_reused_pid_is_reclaimed() {
         let (mut c, p) = temp_db();
-        c.execute("INSERT INTO instances VALUES (1, 0, 'a', 0)", [])
-            .unwrap();
+        // A live PID with the wrong start time: it was reused by another process.
+        let other = Other::spawn();
+        c.execute(
+            "INSERT INTO instances VALUES (?1, 0, 'a', 0)",
+            params![other.0.id()],
+        )
+        .unwrap();
         assert_eq!(acquire(&mut c, "a").unwrap(), Ok(()));
         assert_eq!(holder(&c, "a").unwrap(), Some(std::process::id()));
         cleanup(p);

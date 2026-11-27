@@ -194,10 +194,103 @@ fn open_input(dev: &cpal::Device, buf: Buf) -> Result<cpal::Stream, String> {
                 tracing::debug!("input open with fixed buffer failed ({e}); retrying");
                 cfg.buffer_size = cpal::BufferSize::Default;
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                // WASAPI (Windows) opens capture only in the device's own format, and many
+                // microphones are stereo or 44.1 kHz: open it that way and convert.
+                tracing::debug!(
+                    "input open as 48 kHz mono failed ({e}); trying the device's own format"
+                );
+                return open_input_native(dev, buf)
+                    .map_err(|e2| format!("{e}; in the device's own format: {e2}"));
+            }
         }
     }
     Err("cannot open input".into())
+}
+
+/// Turns captured audio in any channel count and rate into 48 kHz mono: averages the
+/// channels, then resamples by linear interpolation (good enough for speech; this is only
+/// the fallback when the device won't capture 48 kHz mono itself).
+struct CaptureConverter {
+    channels: usize,
+    /// Input samples per output sample.
+    step: f64,
+    /// Where the next output sample falls, in input samples after `prev`.
+    pos: f64,
+    prev: f32,
+}
+
+impl CaptureConverter {
+    fn new(channels: u16, rate: u32) -> Self {
+        Self {
+            channels: (channels as usize).max(1),
+            step: rate.max(1) as f64 / 48_000.0,
+            pos: 0.0,
+            prev: 0.0,
+        }
+    }
+
+    fn push(&mut self, data: &[f32], out: &mut VecDeque<i16>) {
+        for frame in data.chunks(self.channels) {
+            let s = frame.iter().sum::<f32>() / frame.len() as f32;
+            while self.pos < 1.0 {
+                let v = self.prev + (s - self.prev) * self.pos as f32;
+                out.push_back(dsp::clamp16(v * 32767.0));
+                self.pos += self.step;
+            }
+            self.pos -= 1.0;
+            self.prev = s;
+        }
+    }
+}
+
+fn open_input_native(dev: &cpal::Device, buf: Buf) -> Result<cpal::Stream, String> {
+    let sc = dev.default_input_config().map_err(|e| e.to_string())?;
+    let cfg = sc.config();
+    tracing::debug!(
+        "input: {} ch, {} Hz, {:?}; converting to 48 kHz mono",
+        cfg.channels,
+        cfg.sample_rate,
+        sc.sample_format()
+    );
+    let conv = Arc::new(Mutex::new(CaptureConverter::new(
+        cfg.channels,
+        cfg.sample_rate,
+    )));
+    let feed = move |data: &[f32]| {
+        let mut q = buf.lock().unwrap_or_else(|e| e.into_inner());
+        conv.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(data, &mut q);
+        let max = 48 * 300;
+        if q.len() > max {
+            let extra = q.len() - max;
+            q.drain(..extra);
+        }
+    };
+    let err = |e| tracing::warn!("input stream error: {e}");
+    let s = match sc.sample_format() {
+        cpal::SampleFormat::F32 => {
+            dev.build_input_stream::<f32, _, _>(cfg, move |d: &[f32], _| feed(d), err, None)
+        }
+        cpal::SampleFormat::I16 => {
+            let mut tmp = Vec::new();
+            dev.build_input_stream::<i16, _, _>(
+                cfg,
+                move |d: &[i16], _| {
+                    tmp.clear();
+                    tmp.extend(d.iter().map(|&v| v as f32 / 32768.0));
+                    feed(&tmp)
+                },
+                err,
+                None,
+            )
+        }
+        f => return Err(format!("unsupported sample format {f:?}")),
+    }
+    .map_err(|e| e.to_string())?;
+    s.play().map_err(|e| e.to_string())?;
+    Ok(s)
 }
 
 fn make_apm() -> sonora::AudioProcessing {
@@ -659,5 +752,28 @@ fn mixer_thread(st: Arc<Mutex<State>>) {
                 s.push(&mic);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CaptureConverter;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn capture_converter_downmixes_and_resamples() {
+        // 48 kHz stereo: one output per frame, the average of the two channels.
+        let mut c = CaptureConverter::new(2, 48_000);
+        let mut out = VecDeque::new();
+        c.push(&[0.5, 0.5, 0.25, -0.25, -0.5, -0.5], &mut out);
+        assert_eq!(out.len(), 3);
+        // 44.1 kHz mono: one second in gives (very nearly) one second out at 48 kHz.
+        let mut c = CaptureConverter::new(1, 44_100);
+        let mut out = VecDeque::new();
+        for _ in 0..10 {
+            c.push(&[0.1; 4_410], &mut out);
+        }
+        assert!((out.len() as i64 - 48_000).abs() <= 1, "{}", out.len());
+        assert!(out.iter().skip(2).all(|&v| (v - 3277).abs() <= 1));
     }
 }

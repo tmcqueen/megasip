@@ -53,3 +53,19 @@ jobs:
         run: cargo build --locked
       - name: Test
         run: cargo test --locked
+
+  windows-core:
+    # The Qt app doesn't build on Windows yet; this keeps the toolkit-free core portable
+    # and runs its tests (named pipes, Credential Manager, process start times) for real.
+    name: megasip-core on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy -p megasip-core --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test -p megasip-core --locked

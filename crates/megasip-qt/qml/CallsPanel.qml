@@ -119,12 +119,13 @@ QQC2.Pane {
             visible: panel.calls.some(c => c.state === "connected")
             spacing: Units.smallSpacing
 
+            // Not checkable: a click would overwrite the `checked` binding, and the
+            // button would stop following mutes that come from elsewhere (MCP).
             QQC2.ToolButton {
-                icon.name: "mic-off"
-                text: "Mute"
-                checkable: true
+                icon.name: panel.phone.muted ? "mic-off" : "audio-input-microphone"
+                text: panel.phone.muted ? "Unmute" : "Mute"
                 checked: panel.phone.muted
-                onToggled: panel.phone.setMuteOn(checked)
+                onClicked: panel.phone.setMuteOn(!panel.phone.muted)
                 display: QQC2.AbstractButton.TextUnderIcon
             }
             QQC2.ToolButton {

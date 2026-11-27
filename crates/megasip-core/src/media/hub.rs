@@ -30,6 +30,9 @@ pub struct AudioConfig {
     pub echo_cancellation: bool,
 }
 
+/// How many ended calls' final media figures to keep.
+const MAX_ENDED: usize = 64;
+
 struct State {
     streams: Vec<Arc<Stream>>,
     conference: bool,
@@ -52,6 +55,8 @@ struct State {
     /// Dominant frequency of what we play (zero crossings), for tests.
     spk_freq: f32,
     last_stats: Option<super::StreamStats>,
+    /// Final figures of recently ended streams, newest last (for quality reports).
+    ended: VecDeque<super::StreamStats>,
 }
 
 pub struct AudioHub {
@@ -333,6 +338,7 @@ impl AudioHub {
             source: None,
             spk_freq: 0.0,
             last_stats: None,
+            ended: VecDeque::new(),
         }));
         let st2 = st.clone();
         std::thread::Builder::new()
@@ -375,6 +381,11 @@ impl AudioHub {
         if let Some(s) = g.streams.iter().find(|x| x.id == id) {
             let mut last = s.stats();
             last.ended = true;
+            g.ended.retain(|x| x.id != id);
+            if g.ended.len() >= MAX_ENDED {
+                g.ended.pop_front();
+            }
+            g.ended.push_back(last.clone());
             g.last_stats = Some(last);
         }
         g.streams.retain(|x| x.id != id);
@@ -399,6 +410,12 @@ impl AudioHub {
             (g.streams.clone(), g.last_stats.clone())
         };
         (streams.iter().map(|s| s.stats()).collect(), last)
+    }
+
+    /// The final figures of call `id`'s media, if it ended recently.
+    pub fn ended_stats(&self, id: u64) -> Option<super::StreamStats> {
+        let g = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        g.ended.iter().rev().find(|x| x.id == id).cloned()
     }
 
     pub fn set_conference(&self, on: bool) {

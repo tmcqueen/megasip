@@ -192,6 +192,56 @@ stdin, events as JSON lines on stdout (see `crates/megasip-core/src/cli.rs`). It
 without `-a`, or if the account is active elsewhere. Its calls are saved to that account's
 history.
 
+### AI agents (MCP)
+
+`megasip --mcp -a <account> [--source …]` runs one account with no window as an
+[MCP](https://modelcontextprotocol.io) server on stdin/stdout, so an AI agent (Claude Code,
+Claude Desktop, or any MCP client) can run VoIP tests for you. For Claude Code:
+
+```sh
+claude mcp add megasip -- megasip --mcp -a <account>
+```
+
+The agent gets these tools:
+
+| Tool | What it does |
+|------|--------------|
+| `status` | registration, calls in progress, mute, conference, what's sent instead of the mic |
+| `dial` | place a call, optionally with a test signal for that call only; returns the call id |
+| `answer`, `reject`, `hangup`, `hangup_all` | the obvious |
+| `hold`, `mute`, `conference` | on or off |
+| `send_dtmf` | digits, with a gap between them |
+| `transfer`, `attended_transfer` | blind (REFER) and attended (REFER with Replaces) |
+| `set_source` | switch to `milli`, `pink`, `white`, `tone:<hz>`, a sound file, or back to the mic |
+| `wait_for` | block until registered, incoming, ringing, connected, ended, or DTMF received |
+| `events` | everything that happened since a sequence number |
+| `call_quality_report` | during a call, a spot report; after it, the final one (see below) |
+| `sip_trace` | the SIP messages for one call or all of them (digest responses hidden) |
+| `call_history` | this account's history |
+| `get_settings`, `update_settings` | read and change settings and accounts |
+
+A **call quality report** has the MOS and R-factor, loss, jitter, late and duplicate
+packets, buffer underruns, SRTP failures, packet and byte counts, a timeline in 5-second
+windows (so a burst of loss shows up even when the call's average looks fine), and
+findings in plain words ("No RTP was received: one-way audio"). During a call it also has
+the live mic and speaker levels and the dominant frequency coming back, so "dial the echo
+test with `milli` and check I hear 1004 Hz" is something an agent can check. The MOS is a
+simplified ITU-T G.107 E-model with a nominal network delay (there's no RTCP round trip
+yet): good for comparing calls, not a certified score. Reports for the last 50 calls are
+kept until the server exits.
+
+**What the agent can't do.** Account passwords read back as `<redacted>` and can't be
+set or changed over MCP; set them in Preferences. It can't delete the account it runs as.
+Emergency numbers (911, 112, 999, 000, 110, 119, also behind a one-digit outside-line
+prefix) are refused; 933, the US address readback line, is allowed. To fence it in
+further, `--mcp-allow <prefix>` (repeatable) only lets it call numbers or URIs that start
+with one of the prefixes. Your MCP client still asks before each tool call unless you
+tell it not to.
+
+Stdout is the MCP channel, so `--debug` can't be used with `--mcp`; set
+`MEGASIP_LOG=debug` for logs on stderr. When the client disconnects, MegaSIP hangs up,
+un-registers and exits.
+
 ## Preferences
 
 Preferences open in their own window: the gear in the status bar, **Preferences…** in

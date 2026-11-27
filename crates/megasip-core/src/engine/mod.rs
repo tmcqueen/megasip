@@ -73,6 +73,8 @@ pub struct CallInfo {
     pub connected_at: Option<i64>,
     pub reason: String,
     pub transfer: String,
+    /// The SIP Call-ID of the dialog, for matching the SIP trace.
+    pub sip_call_id: String,
 }
 
 pub enum Event {

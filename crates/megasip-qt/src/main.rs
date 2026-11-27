@@ -9,8 +9,8 @@ mod bridge;
 // The toolkit-independent modules live in `megasip-core`; re-exported here so this crate's
 // code keeps addressing them as `crate::config`, `crate::engine` and so on.
 pub use megasip_core::{
-    accounticon, cli, config, controller, db, debug, engine, ipc, logging, media, secrets, store,
-    SOURCE,
+    accounticon, cli, config, controller, db, debug, engine, ipc, logging, mcp, media, secrets,
+    store, SOURCE,
 };
 
 use std::sync::OnceLock;
@@ -37,6 +37,11 @@ Usage:
   megasip --hangup              hang up all calls
   megasip --quit                quit every MegaSIP window
   megasip --cli -a <name>       no window: commands on stdin, events as JSON on stdout
+  megasip --mcp -a <name>       no window: an MCP server on stdin/stdout, so an AI agent can
+                                place calls, send DTMF, pull call quality reports and change
+                                settings (never account passwords); emergency numbers refused
+  megasip --mcp-allow <prefix>  with --mcp: only call numbers or URIs starting with <prefix>
+                                (repeat for more)
   megasip --debug               log at debug level to stdout (command line, hand-off, window)
 
 Environment: MEGASIP_LOG=debug for SIP traces on stderr, MEGASIP_AUDIO_LOG=info for audio.";
@@ -49,6 +54,8 @@ fn fail(msg: &str) -> ! {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cli_mode = false;
+    let mut mcp_mode = false;
+    let mut mcp_allow: Vec<String> = Vec::new();
     let mut minimized = false;
     let mut account: Option<String> = None;
     let mut source: Option<String> = None;
@@ -67,6 +74,8 @@ fn main() {
                 return;
             }
             "--cli" => cli_mode = true,
+            "--mcp" => mcp_mode = true,
+            "--mcp-allow" => mcp_allow.push(value("--mcp-allow")),
             "--debug" => debug = true,
             "--minimized" | "-m" => minimized = true,
             "-a" | "--account" => account = Some(value("--account")),
@@ -87,6 +96,16 @@ fn main() {
             }
             Err(e) => fail(&e),
         }
+    }
+
+    if mcp_mode && debug {
+        fail("--debug logs to stdout, which --mcp uses; set MEGASIP_LOG=debug for logs on stderr");
+    }
+    if mcp_mode && cli_mode {
+        fail("--mcp and --cli don't go together");
+    }
+    if !mcp_allow.is_empty() && !mcp_mode {
+        fail("--mcp-allow needs --mcp");
     }
 
     let settings = config::Settings::load();
@@ -139,6 +158,30 @@ fn main() {
         logging::set_log_name(Some(&acc.short_name));
         cli::run(settings, acc.id, c);
         return;
+    }
+
+    if mcp_mode {
+        logging::init(&settings);
+        let name = account.unwrap_or_else(|| fail("--mcp needs -a <account>"));
+        let acc = settings
+            .find_account(&name)
+            .cloned()
+            .unwrap_or_else(|| fail(&format!("no account named \"{name}\"")));
+        drop(db);
+        logging::set_log_name(Some(&acc.short_name));
+        // SIGTERM/SIGINT: hang up and un-register, as a window does.
+        let _ = ctrlc::set_handler(|| {
+            if !ipc::send_self("quit") {
+                std::process::exit(0);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            std::process::exit(0);
+        });
+        let policy = mcp::DialPolicy { allow: mcp_allow };
+        match mcp::run(acc.id.clone(), policy) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => fail(&format!("can't start: {e}")),
+        }
     }
 
     // Hand the request to running windows where that's what it means.

@@ -203,6 +203,7 @@ impl Engine {
             connected_at: c.connected_at.map(unix),
             reason: c.reason.clone(),
             transfer: c.transfer.clone(),
+            sip_call_id: c.sip_call_id.clone(),
         }
     }
 

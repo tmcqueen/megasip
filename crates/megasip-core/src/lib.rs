@@ -11,6 +11,7 @@ pub mod debug;
 pub mod engine;
 pub mod ipc;
 pub mod logging;
+pub mod mcp;
 pub mod media;
 pub mod secrets;
 pub mod store;

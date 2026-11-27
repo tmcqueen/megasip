@@ -26,6 +26,7 @@ venator.workspace = true
 tracing-log.workspace = true
 rusqlite.workspace = true
 symphonia.workspace = true
+rmcp.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 secret-service.workspace = true

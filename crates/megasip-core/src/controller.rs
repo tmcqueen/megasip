@@ -1027,7 +1027,7 @@ impl Controller {
     /// `megasip -a foo --source <what> [number]` while this window has foo: send `<what>` on
     /// the next call, then go back to what the window had. Refused (with a message) while a
     /// call is up, since the new source would go out on that call too.
-    fn switch_source(&mut self, arg: &str) -> bool {
+    pub(crate) fn switch_source(&mut self, arg: &str) -> bool {
         if self.source.as_ref().map(|s| s.arg()).as_deref() == Some(arg) {
             return true;
         }
@@ -1058,6 +1058,13 @@ impl Controller {
         }
         self.use_source(Some(src));
         true
+    }
+
+    /// Send `src` instead of the microphone from now on (None: the microphone), calls in
+    /// progress included, and forget any per-call source waiting to be undone.
+    pub(crate) fn set_source(&mut self, src: Option<Source>) {
+        self.restore_source = None;
+        self.use_source(src);
     }
 
     /// Send `src` instead of the microphone (None: the microphone), and show it.

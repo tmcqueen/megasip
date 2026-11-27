@@ -51,8 +51,8 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    # Built on Debian 13 (Qt 6.8, glibc 2.41), the oldest target that has a new enough Qt,
-    # so the same packages also install on newer Ubuntu and Fedora.
+    # The .deb and .tgz, built on Debian 13 (Qt 6.8, glibc 2.41), the oldest target with a
+    # new enough Qt, so they also install on newer Debian and Ubuntu.
     container: debian:trixie
     steps:
       - name: Install system packages
@@ -63,8 +63,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates curl git \
             build-essential pkg-config clang lld \
-            qt6-base-dev qt6-declarative-dev libasound2-dev \
-            dpkg-dev rpm
+            qt6-base-dev qt6-declarative-dev libasound2-dev dpkg-dev
       # The packaging scripts, from the commit this workflow runs from.
       - uses: actions/checkout@v5
       # The source being released.
@@ -81,10 +80,52 @@ jobs:
         working-directory: src
         run: cargo build -p megasip-qt --release --locked
       - name: Package
-        run: packaging/linux-package.sh src dist
+        run: packaging/linux-package.sh src dist deb tgz
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # The .rpm, built on Fedora against Fedora's Qt: the binary calls a few Qt-private
+  # functions, and Fedora's Qt versions those symbols differently from Debian's.
+  fedora:
+    name: Fedora ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: fedora:43
+    steps:
+      - name: Install system packages
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            git gcc gcc-c++ clang lld pkgconf-pkg-config \
+            qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel \
+            alsa-lib-devel rpm-build tar
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          key: release-fedora
+      - name: Build (release)
+        working-directory: src
+        run: cargo build -p megasip-qt --release --locked
+      - name: Package
+        run: packaging/linux-package.sh src dist rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 
@@ -93,7 +134,7 @@ jobs:
   # here rather than on someone's desktop.
   install-test:
     name: Install on ${{ matrix.distro }} ${{ matrix.arch }}
-    needs: linux
+    needs: [linux, fedora]
     strategy:
       fail-fast: false
       matrix:
@@ -104,7 +145,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: linux-${{ matrix.arch }}
+          name: ${{ startsWith(matrix.distro, 'fedora') && 'fedora' || 'linux' }}-${{ matrix.arch }}
           path: dist
       - name: Install the .deb
         if: "!startsWith(matrix.distro, 'fedora')"
@@ -173,7 +214,7 @@ jobs:
   publish:
     name: Attach to the release
     if: github.event_name != 'pull_request'
-    needs: [linux, install-test, windows]
+    needs: [linux, fedora, install-test, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

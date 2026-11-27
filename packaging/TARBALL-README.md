@@ -1,26 +1,23 @@
 # MegaSIP
 
 A voice-only SIP softphone for Linux desktops. This tarball holds a ready-built `megasip`
-binary. Where you can, use the `.deb` or `.rpm` from the same release instead: they pull
-in Qt for you and your package manager can update or remove them.
+binary, built on Debian 13 for Debian- and Ubuntu-family systems. Where you can, use the
+`.deb` from the same release instead: it pulls in Qt for you and your package manager can
+update or remove it. On Fedora, use the `.rpm`; this binary doesn't run against Fedora's Qt.
 
 ## Install
 
-MegaSIP uses the system's Qt 6.5 or newer (Debian 13, Ubuntu 24.10+, Fedora 39+). Install
-its runtime pieces first:
+MegaSIP uses the system's Qt (Debian 13 or newer, Ubuntu 26.04 or newer). Install its
+runtime pieces first:
 
 ```sh
-# Debian, Ubuntu
 sudo apt install qml6-module-qtquick-controls qml6-module-qtquick-layouts \
     qml6-module-qtquick-dialogs qml6-module-qtquick-effects qml6-module-qtqml-models \
     qml6-module-qt-labs-platform qt6-svg-plugins
-# Fedora
-sudo dnf install qt6-qtdeclarative qt6-qtsvg
 ```
 
 On Plasma, also install its style and notifications (with Answer / Decline):
-`qml6-module-org-kde-qqc2desktopstyle qml6-module-org-kde-notifications` (Debian, Ubuntu)
-or `kf6-qqc2-desktop-style kf6-knotifications` (Fedora).
+`qml6-module-org-kde-qqc2desktopstyle qml6-module-org-kde-notifications`.
 
 Then:
 

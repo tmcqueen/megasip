@@ -74,10 +74,11 @@ the DLLs next to `target\release\megasip.exe`.
 
 Each [GitHub release](https://github.com/tmcqueen/megasip/releases) carries the Windows zip
 and, for both x86_64 and aarch64 (arm64) Linux, a `.deb`, an `.rpm` and a `.tgz`. The
-Linux packages are built on Debian 13 and install on Debian 13 or newer, Ubuntu 26.04 or newer and Fedora
-43+ (CI installs and starts each one on Debian 13, Ubuntu 26.04 and Fedora 43). The `.tgz`
-holds the binary and an `install.sh` that installs it into `~/.local` (or `/usr/local`
-with `sudo`); it needs Qt installed by hand, which its `README.md` lists.
+`.deb` and `.tgz` are built on Debian 13 and run on Debian 13 or newer and Ubuntu 26.04 or
+newer; the `.rpm` is built on Fedora 43, for Fedora 43 (CI installs and starts each one on
+those systems). The `.tgz` holds the binary and an `install.sh` that installs it into
+`~/.local` (or `/usr/local` with `sudo`); it needs Qt installed by hand, which its
+`README.md` lists.
 
 The Release workflow (`.github/workflows/release.yml`) builds them when a `v*` tag is
 pushed and attaches them to that tag's release, creating it if needed. To build an

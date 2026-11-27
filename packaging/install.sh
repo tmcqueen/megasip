@@ -6,7 +6,7 @@
 #   PREFIX=/opt/megasip ./install.sh
 #   ./install.sh --uninstall   removes what an install with the same PREFIX put there
 #
-# MegaSIP uses the system's Qt 6 (6.5 or newer). The .deb and .rpm pull it in for you;
+# MegaSIP uses the system's Qt 6 (Debian 13 or Ubuntu 26.04 and newer). The .deb pulls it in;
 # with this tarball, install it yourself first (see README.md).
 set -euo pipefail
 cd "$(dirname "$0")"

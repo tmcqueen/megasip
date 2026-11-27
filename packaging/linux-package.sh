@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Package an already-built target/release/megasip as a .deb, an .rpm and a .tgz.
+# Package an already-built target/release/megasip as a .deb, an .rpm and/or a .tgz.
 #
-#   packaging/linux-package.sh <source dir> <output dir>
+#   packaging/linux-package.sh <source dir> <output dir> [deb] [rpm] [tgz]
 #
-# Run on the architecture being packaged (CI uses native x86_64 and arm64 runners), on
-# Debian or Ubuntu with dpkg-dev and rpm installed. The source dir is the checkout the
+# With no formats given, makes all three. Run on the architecture being packaged (CI uses
+# native x86_64 and arm64 runners) and on the distribution the package is for: the .deb
+# and .tgz on Debian (dpkg-dev), the .rpm on Fedora (rpm-build). The binary calls a few
+# Qt-private functions (see below), and Fedora's Qt names those differently from
+# Debian's, so one binary can't serve both. The source dir is the checkout the
 # binary was built from: the version comes from its Cargo.toml and the desktop files from
 # its data/. This script may come from a newer commit than the source, so that an older
 # tag can be packaged again.
@@ -18,11 +21,13 @@ src="$(cd "$1" && pwd)"
 mkdir -p "$2"
 out="$(cd "$2" && pwd)"
 here="$(cd "$(dirname "$0")" && pwd)"
+shift 2
+formats="${*:-deb rpm tgz}"
+want() { case " $formats " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$src/Cargo.toml" | head -n1)"
 [ -n "$version" ] || { echo "no version in $src/Cargo.toml" >&2; exit 1; }
 arch="$(uname -m)" # x86_64 or aarch64, as rpm and tarball names use them
-deb_arch="$(dpkg --print-architecture)" # amd64 or arm64
 bin="${CARGO_TARGET_DIR:-$src/target}/release/megasip"
 [ -x "$bin" ] || { echo "$bin is missing; build it first" >&2; exit 1; }
 
@@ -49,6 +54,8 @@ install -Dm644 "$src/LICENSE" "$root/usr/share/doc/megasip/LICENSE"
 install -Dm644 "$src/crates/megasip-qt/icons/README.md" "$root/usr/share/doc/megasip/ICONS-LICENSE.md"
 
 # --- .deb -------------------------------------------------------------------------------
+if want deb; then
+deb_arch="$(dpkg --print-architecture)" # amd64 or arm64
 deb_runtime="qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-layouts,
  qml6-module-qtquick-dialogs, qml6-module-qtquick-effects, qml6-module-qtqml-models,
  qml6-module-qtquick-templates, qml6-module-qtquick-window, qml6-module-qt-labs-platform,
@@ -85,17 +92,19 @@ EOF
 deb="$out/megasip_${version}_${deb_arch}.deb"
 dpkg-deb --root-owner-group -Zxz --build "$debroot" "$deb"
 
+fi
+
 # --- .rpm -------------------------------------------------------------------------------
+if want rpm; then
 # Fedora package names. rpmbuild adds the libQt6*.so.6 and libc requirements itself.
 rpm_runtime="qt6-qtdeclarative qt6-qtsvg"
 rpm_recommends="kf6-qqc2-desktop-style kf6-knotifications"
 rpmtop="$work/rpm"
 mkdir -p "$rpmtop"/{BUILD,RPMS,SPECS,BUILDROOT}
-# The same Qt-private functions as above: rpmbuild would require
-# libQt6Qml.so.6(Qt_6_PRIVATE_API), which Fedora's Qt doesn't provide under that name.
-# Drop it the same way.
+# Built on Fedora against Fedora's Qt, rpmbuild's requirements include the Qt-private
+# symbol version, so dnf keeps MegaSIP and Qt in step rather than leaving a binary that
+# won't start after a Qt update. A release rebuilt with the Release workflow follows Qt.
 cat >"$rpmtop/SPECS/megasip.spec" <<EOF
-%global __requires_exclude ^lib.*\\(Qt_6_PRIVATE_API\\)
 Name:           megasip
 Version:        $version
 Release:        1
@@ -128,7 +137,10 @@ rpmbuild -bb --quiet \
 rpm="$out/megasip-${version}-1.${arch}.rpm"
 mv "$rpmtop/RPMS/$arch/"*.rpm "$rpm"
 
+fi
+
 # --- .tgz -------------------------------------------------------------------------------
+if want tgz; then
 name="megasip-${version}-linux-${arch}"
 tdir="$work/$name"
 mkdir -p "$tdir"
@@ -139,10 +151,15 @@ cp "$src/data/org.megasip.MegaSIP.desktop" "$src/data/org.megasip.MegaSIP.svg" \
 cp "$src/crates/megasip-qt/icons/README.md" "$tdir/ICONS-LICENSE.md"
 cp "$here/TARBALL-README.md" "$tdir/README.md"
 tar -C "$work" --owner=0 --group=0 -czf "$out/$name.tgz" "$name"
+fi
 
-echo "Packaged MegaSIP $version for $arch:"
+echo "Packaged MegaSIP $version for $arch ($formats):"
 ls -l "$out"
-echo "--- deb Depends ---"
-dpkg-deb -f "$deb" Depends
-echo "--- rpm Requires ---"
-rpm -qp --requires "$rpm"
+if want deb; then
+    echo "--- deb Depends ---"
+    dpkg-deb -f "$deb" Depends
+fi
+if want rpm; then
+    echo "--- rpm Requires ---"
+    rpm -qp --requires "$rpm"
+fi

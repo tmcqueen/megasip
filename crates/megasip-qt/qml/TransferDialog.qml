@@ -1,10 +1,9 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // Transfer: to a number (blind), or to another call you're on (attended).
-Kirigami.Dialog {
+ModalDialog {
     id: dlg
     property var calls: []
     property var contacts: []
@@ -21,20 +20,26 @@ Kirigami.Dialog {
     property var others: calls.filter(c => c.id !== callId && c.state === "connected")
 
     title: "Transfer call"
-    preferredWidth: Kirigami.Units.gridUnit * 18
-    padding: Kirigami.Units.largeSpacing
-    standardButtons: Kirigami.Dialog.Cancel
-    customFooterActions: [
-        Kirigami.Action {
+    preferredWidth: Units.gridUnit * 18
+    padding: Units.largeSpacing
+    footer: QQC2.DialogButtonBox {
+        QQC2.Button {
             text: "Transfer"
             icon.name: "go-next"
             enabled: target.text.trim().length > 0
-            onTriggered: { dlg.blind(dlg.callId, target.text.trim()); dlg.close() }
+            QQC2.DialogButtonBox.buttonRole: QQC2.DialogButtonBox.ActionRole
+            onClicked: { dlg.blind(dlg.callId, target.text.trim()); dlg.close() }
         }
-    ]
+        QQC2.Button {
+            text: "Cancel"
+            icon.name: "dialog-cancel"
+            QQC2.DialogButtonBox.buttonRole: QQC2.DialogButtonBox.RejectRole
+        }
+    }
 
     ColumnLayout {
-        spacing: Kirigami.Units.smallSpacing
+        width: parent ? parent.width : implicitWidth
+        spacing: Units.smallSpacing
         QQC2.Label { text: "Send this call to:" }
         QQC2.TextField {
             id: target
@@ -55,7 +60,7 @@ Kirigami.Dialog {
                 onClicked: target.text = modelData.number
             }
         }
-        Kirigami.Separator { Layout.fillWidth: true; visible: dlg.others.length > 0 }
+        Separator { Layout.fillWidth: true; visible: dlg.others.length > 0 }
         QQC2.Label { text: "Or connect to a call you're on:"; visible: dlg.others.length > 0 }
         Repeater {
             model: dlg.others

@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // Codecs: tick to enable, arrows to set priority (top = preferred).
 ColumnLayout {

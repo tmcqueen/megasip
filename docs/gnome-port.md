@@ -1,5 +1,9 @@
 # A GNOME/Wayland version of MegaSIP
 
+> **Update (2026-11-27):** the Qt UI no longer needs KDE Frameworks. Kirigami, Kirigami
+> Addons, KItemModels and KI18n are gone, and KNotifications and the Plasma style are used
+> only when installed. The KDE rows below describe the app before that change.
+
 Status: proposal, nothing built yet. Written 2026-11-25 against `main` at `725b714`
 (after "One account per window" and the short-name change).
 

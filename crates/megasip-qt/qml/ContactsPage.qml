@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import QtQuick.Dialogs as Dialogs
-import org.kde.kirigami as Kirigami
-import org.kde.kirigamiaddons.components as Components
 
 Item {
     id: page
@@ -15,6 +13,7 @@ Item {
         editor.contact = { id: "", name: name || "", number: number || "", favorite: false, notes: "" }
         editor.open()
     }
+    function closeEditor() { editor.close() }
 
     property var filtered: {
         const t = search.text.trim().toLowerCase()
@@ -28,8 +27,8 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: Kirigami.Units.smallSpacing
-            Kirigami.SearchField {
+            Layout.margins: Units.smallSpacing
+            SearchField {
                 id: search
                 Layout.fillWidth: true
                 placeholderText: "Search contacts"
@@ -64,8 +63,8 @@ Item {
                     width: ListView.view.width
                     onClicked: page.dialRequested(modelData.number)
                     contentItem: RowLayout {
-                        Components.Avatar {
-                            implicitWidth: Kirigami.Units.iconSizes.medium
+                        Avatar {
+                            implicitWidth: Units.iconSizes.medium
                             implicitHeight: implicitWidth
                             name: d.modelData.name || d.modelData.number
                         }
@@ -77,7 +76,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: d.modelData.number
                                 visible: !!d.modelData.name
-                                font: Kirigami.Theme.smallFont
+                                font: Theme.smallFont
                                 opacity: 0.7
                                 elide: Text.ElideRight
                             }
@@ -107,13 +106,13 @@ Item {
                         QQC2.MenuItem { text: "Delete"; icon.name: "edit-delete-remove"; onTriggered: page.phone.deleteContact(d.modelData.id) }
                     }
                 }
-                Kirigami.PlaceholderMessage {
+                Placeholder {
                     anchors.centerIn: parent
-                    width: parent.width - Kirigami.Units.gridUnit * 4
+                    width: parent.width - Units.gridUnit * 4
                     visible: list.count === 0
                     icon.name: "im-user"
                     text: search.text ? "No matches" : "No contacts yet"
-                    helpfulAction: Kirigami.Action {
+                    helpfulAction: QQC2.Action {
                         icon.name: "contact-new-symbolic"
                         text: "Add contact"
                         onTriggered: page.editNew(search.text, "")
@@ -123,12 +122,12 @@ Item {
         }
     }
 
-    Kirigami.Dialog {
+    ModalDialog {
         id: editor
         property var contact: ({})
         title: contact.id ? "Edit contact" : "New contact"
-        standardButtons: Kirigami.Dialog.Save | Kirigami.Dialog.Cancel
-        padding: Kirigami.Units.largeSpacing
+        standardButtons: QQC2.Dialog.Save | QQC2.Dialog.Cancel
+        padding: Units.largeSpacing
         onOpened: { nameField.text = contact.name || ""; numberField.text = contact.number || ""; notesField.text = contact.notes || ""; nameField.forceActiveFocus() }
         onAccepted: {
             const c = Object.assign({}, contact)
@@ -137,10 +136,17 @@ Item {
             c.notes = notesField.text
             page.phone.saveContact(JSON.stringify(c))
         }
-        Kirigami.FormLayout {
-            QQC2.TextField { id: nameField; Kirigami.FormData.label: "Name:" }
-            QQC2.TextField { id: numberField; Kirigami.FormData.label: "Number:"; inputMethodHints: Qt.ImhDialableCharactersOnly }
-            QQC2.TextField { id: notesField; Kirigami.FormData.label: "Notes:" }
+        GridLayout {
+            width: parent ? parent.width : implicitWidth
+            columns: 2
+            columnSpacing: Units.largeSpacing
+            rowSpacing: Units.smallSpacing
+            QQC2.Label { text: "Name:"; Layout.alignment: Qt.AlignRight }
+            QQC2.TextField { id: nameField; Layout.fillWidth: true }
+            QQC2.Label { text: "Number:"; Layout.alignment: Qt.AlignRight }
+            QQC2.TextField { id: numberField; Layout.fillWidth: true; inputMethodHints: Qt.ImhDialableCharactersOnly }
+            QQC2.Label { text: "Notes:"; Layout.alignment: Qt.AlignRight }
+            QQC2.TextField { id: notesField; Layout.fillWidth: true }
         }
     }
 
@@ -162,10 +168,10 @@ Item {
         nameFilters: ["CSV (*.csv)"]
         onAccepted: page.phone.exportContacts(selectedFile.toString())
     }
-    Kirigami.InlineMessage {
+    InlineMessage {
         id: imported
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: Kirigami.Units.smallSpacing }
-        type: Kirigami.MessageType.Positive
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: Units.smallSpacing }
+        type: "positive"
         showCloseButton: true
         visible: false
     }

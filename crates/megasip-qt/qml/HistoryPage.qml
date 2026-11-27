@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 Item {
     id: page
@@ -39,8 +38,8 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: Kirigami.Units.smallSpacing
-            Kirigami.SearchField { id: search; Layout.fillWidth: true; placeholderText: "Search calls" }
+            Layout.margins: Units.smallSpacing
+            SearchField { id: search; Layout.fillWidth: true; placeholderText: "Search calls" }
             QQC2.ComboBox {
                 model: [{ t: "All", v: "all" }, { t: "Missed", v: "missed" }, { t: "Incoming", v: "in" }, { t: "Outgoing", v: "out" }]
                 textRole: "t"
@@ -69,11 +68,11 @@ Item {
                     width: ListView.view.width
                     onClicked: page.dialRequested(modelData.number)
                     contentItem: RowLayout {
-                        Kirigami.Icon {
-                            implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        Icon {
+                            implicitWidth: Units.iconSizes.smallMedium
                             implicitHeight: implicitWidth
                             source: d.modelData.kind === "missed" ? "call-missed" : d.modelData.kind === "in" ? "call-incoming" : "call-outgoing"
-                            color: d.modelData.kind === "missed" ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                            color: d.modelData.kind === "missed" ? Theme.negativeTextColor : Theme.textColor
                             isMask: d.modelData.kind === "missed"
                         }
                         ColumnLayout {
@@ -82,14 +81,14 @@ Item {
                             QQC2.Label {
                                 Layout.fillWidth: true
                                 text: d.modelData.name || d.modelData.number
-                                color: d.modelData.kind === "missed" ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                                color: d.modelData.kind === "missed" ? Theme.negativeTextColor : Theme.textColor
                                 elide: Text.ElideRight
                             }
                             QQC2.Label {
                                 Layout.fillWidth: true
                                 text: (d.modelData.name ? d.modelData.number + "  ·  " : "") + page.when(d.modelData.time)
                                       + (d.modelData.duration ? "  ·  " + page.dur(d.modelData.duration) : "")
-                                font: Kirigami.Theme.smallFont
+                                font: Theme.smallFont
                                 opacity: 0.7
                                 elide: Text.ElideRight
                             }
@@ -111,9 +110,9 @@ Item {
                         QQC2.MenuItem { text: "Delete"; icon.name: "edit-delete-remove"; onTriggered: page.phone.deleteHistory(d.modelData.id) }
                     }
                 }
-                Kirigami.PlaceholderMessage {
+                Placeholder {
                     anchors.centerIn: parent
-                    width: parent.width - Kirigami.Units.gridUnit * 4
+                    width: parent.width - Units.gridUnit * 4
                     visible: list.count === 0
                     icon.name: "view-history"
                     text: "No calls"
@@ -123,11 +122,11 @@ Item {
     }
     TextEdit { id: clip; visible: false }
 
-    Kirigami.PromptDialog {
+    PromptDialog {
         id: confirmClear
         title: "Clear call history?"
         subtitle: "This removes every call from the list."
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
         onAccepted: page.phone.clearHistory()
     }
 }

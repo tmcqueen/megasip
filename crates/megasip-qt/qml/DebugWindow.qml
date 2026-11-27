@@ -1,9 +1,8 @@
 import QtQuick
+import QtQml.Models
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import QtQuick.Dialogs as Dialogs
-import org.kde.kirigami as Kirigami
-import org.kde.kitemmodels as KItemModels
 
 // Debug window: SIP trace, call ladder, call quality and logs. Everything is captured in
 // memory all the time (bounded), so opening this after a problem still shows it.
@@ -12,12 +11,12 @@ QQC2.ApplicationWindow {
     required property var phone
 
     title: "MegaSIP — Debug"
-    width: Kirigami.Units.gridUnit * 64
-    height: Kirigami.Units.gridUnit * 40
-    minimumWidth: Kirigami.Units.gridUnit * 40
-    minimumHeight: Kirigami.Units.gridUnit * 24
+    width: Units.gridUnit * 64
+    height: Units.gridUnit * 40
+    minimumWidth: Units.gridUnit * 40
+    minimumHeight: Units.gridUnit * 24
     visible: false
-    color: Kirigami.Theme.backgroundColor
+    color: Theme.backgroundColor
 
     property bool paused: false
     property int lastSip: 0
@@ -45,11 +44,11 @@ QQC2.ApplicationWindow {
         return `${p(d.getHours(), 2)}:${p(d.getMinutes(), 2)}:${p(d.getSeconds(), 2)}.${p(d.getMilliseconds(), 3)}`
     }
     function statusColor(r) {
-        if (r.code === 0) return Kirigami.Theme.textColor
-        if (r.code < 200) return Kirigami.Theme.disabledTextColor
-        if (r.code < 300) return Kirigami.Theme.positiveTextColor
-        if (r.code < 400) return Kirigami.Theme.neutralTextColor
-        return Kirigami.Theme.negativeTextColor
+        if (r.code === 0) return Theme.textColor
+        if (r.code < 200) return Theme.disabledTextColor
+        if (r.code < 300) return Theme.positiveTextColor
+        if (r.code < 400) return Theme.neutralTextColor
+        return Theme.negativeTextColor
     }
 
     signal cleared()
@@ -167,8 +166,8 @@ QQC2.ApplicationWindow {
             spacing: 0
             RowLayout {
                 Layout.fillWidth: true
-                Layout.margins: Kirigami.Units.smallSpacing
-                Kirigami.SearchField {
+                Layout.margins: Units.smallSpacing
+                SearchField {
                     id: sipSearch
                     Layout.fillWidth: true
                     placeholderText: "Search messages (method, number, header text…)"
@@ -197,65 +196,67 @@ QQC2.ApplicationWindow {
 
                 QQC2.ScrollView {
                     QQC2.SplitView.preferredWidth: dbg.width * 0.5
-                    QQC2.SplitView.minimumWidth: Kirigami.Units.gridUnit * 18
+                    QQC2.SplitView.minimumWidth: Units.gridUnit * 18
                     ListView {
                         id: sipList
                         clip: true
-                        model: KItemModels.KSortFilterProxyModel {
+                        model: FilterModel {
                             id: sipProxy
-                            sourceModel: sipModel
-                            filterRowCallback: function (row, parent) {
-                                const r = sipModel.get(row)
+                            model: sipModel
+                            accept: r => {
                                 if (hideHousekeeping.checked && (r.method === "REGISTER" || r.method === "OPTIONS")) return false
                                 const t = sipSearch.text.trim().toLowerCase()
                                 return !t || r.text.toLowerCase().includes(t)
                             }
+                            delegate: sipDelegate
                         }
                         onCountChanged: if (follow.checked) positionViewAtEnd()
                         highlightMoveDuration: 0
-                        delegate: QQC2.ItemDelegate {
-                            id: srow
-                            required property int index
-                            required property var model
-                            width: ListView.view.width
-                            highlighted: ListView.isCurrentItem
-                            onClicked: { sipList.currentIndex = index; sipDetail.text = model.text; follow.checked = false }
-                            contentItem: RowLayout {
-                                spacing: Kirigami.Units.smallSpacing
-                                QQC2.Label {
-                                    text: dbg.fmtTime(srow.model.t)
-                                    font: Kirigami.Theme.smallFont
-                                    opacity: 0.7
-                                }
-                                QQC2.Label {
-                                    text: srow.model.dir === "out" ? "→" : "←"
-                                    color: srow.model.dir === "out" ? Kirigami.Theme.linkColor : Kirigami.Theme.visitedLinkColor
-                                    font.bold: true
-                                }
-                                QQC2.Label {
-                                    Layout.fillWidth: true
-                                    text: srow.model.code ? srow.model.line.replace("SIP/2.0 ", "") + "  (" + srow.model.method + ")"
-                                                          : srow.model.method + "  " + (srow.model.toUser || "")
-                                    color: dbg.statusColor(srow.model)
-                                    font.weight: srow.model.code ? Font.Normal : Font.DemiBold
-                                    elide: Text.ElideRight
-                                }
-                                QQC2.Label {
-                                    text: "SDP"
-                                    visible: srow.model.sdp
-                                    font: Kirigami.Theme.smallFont
-                                    color: Kirigami.Theme.neutralTextColor
-                                }
-                                QQC2.Label {
-                                    text: srow.model.transport + " " + srow.model.remote
-                                    font: Kirigami.Theme.smallFont
-                                    opacity: 0.6
+                        Component {
+                            id: sipDelegate
+                            QQC2.ItemDelegate {
+                                id: srow
+                                required property var model
+                                width: sipList.width
+                                highlighted: ListView.isCurrentItem
+                                onClicked: { sipList.currentIndex = DelegateModel.shownIndex; sipDetail.text = model.text; follow.checked = false }
+                                contentItem: RowLayout {
+                                    spacing: Units.smallSpacing
+                                    QQC2.Label {
+                                        text: dbg.fmtTime(srow.model.t)
+                                        font: Theme.smallFont
+                                        opacity: 0.7
+                                    }
+                                    QQC2.Label {
+                                        text: srow.model.dir === "out" ? "→" : "←"
+                                        color: srow.model.dir === "out" ? Theme.linkColor : Theme.visitedLinkColor
+                                        font.bold: true
+                                    }
+                                    QQC2.Label {
+                                        Layout.fillWidth: true
+                                        text: srow.model.code ? srow.model.line.replace("SIP/2.0 ", "") + "  (" + srow.model.method + ")"
+                                                              : srow.model.method + "  " + (srow.model.toUser || "")
+                                        color: dbg.statusColor(srow.model)
+                                        font.weight: srow.model.code ? Font.Normal : Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+                                    QQC2.Label {
+                                        text: "SDP"
+                                        visible: srow.model.sdp
+                                        font: Theme.smallFont
+                                        color: Theme.neutralTextColor
+                                    }
+                                    QQC2.Label {
+                                        text: srow.model.transport + " " + srow.model.remote
+                                        font: Theme.smallFont
+                                        opacity: 0.6
+                                    }
                                 }
                             }
                         }
-                        Kirigami.PlaceholderMessage {
+                        Placeholder {
                             anchors.centerIn: parent
-                            width: parent.width - Kirigami.Units.gridUnit * 4
+                            width: parent.width - Units.gridUnit * 4
                             visible: sipList.count === 0
                             text: "No SIP messages yet"
                             explanation: "Messages appear here as MegaSIP sends and receives them."
@@ -266,7 +267,7 @@ QQC2.ApplicationWindow {
                     spacing: 0
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.margins: Kirigami.Units.smallSpacing
+                        Layout.margins: Units.smallSpacing
                         QQC2.Label { text: "Message"; font.weight: Font.DemiBold; Layout.fillWidth: true }
                         QQC2.Button {
                             text: "Copy"
@@ -283,7 +284,7 @@ QQC2.ApplicationWindow {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap
-                            font.family: Kirigami.Theme.fixedWidthFont.family
+                            font.family: Theme.fixedWidthFont.family
                             placeholderText: "Select a message to see it in full."
                             Connections {
                                 target: dbg
@@ -332,8 +333,8 @@ QQC2.ApplicationWindow {
         onAccepted: {
             let out = ""
             if (kind === "sip") {
-                for (let i = 0; i < sipProxy.rowCount(); i++) {
-                    const r = sipModel.get(sipProxy.mapToSource(sipProxy.index(i, 0)).row)
+                for (let i = 0; i < sipProxy.shownCount(); i++) {
+                    const r = sipProxy.shownRow(i)
                     out += `===== ${dbg.fmtTime(r.t)}  ${r.dir === "out" ? "SENT to" : "RECEIVED from"} ${r.transport} ${r.remote} =====\n${r.text}\n\n`
                 }
             } else {

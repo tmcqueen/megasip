@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // Account status + quick toggles (MicroSIP's top bar: account, DND, auto-answer).
 QQC2.ToolBar {
@@ -18,10 +17,10 @@ QQC2.ToolBar {
     signal menuOpening()
 
     function stateColor(s) {
-        if (s === "registered") return Kirigami.Theme.positiveTextColor
-        if (s === "error") return Kirigami.Theme.negativeTextColor
-        if (s === "registering") return Kirigami.Theme.neutralTextColor
-        return Kirigami.Theme.disabledTextColor
+        if (s === "registered") return Theme.positiveTextColor
+        if (s === "error") return Theme.negativeTextColor
+        if (s === "registering") return Theme.neutralTextColor
+        return Theme.disabledTextColor
     }
     // Registration state of this window's account.
     property var activeState: {
@@ -31,14 +30,14 @@ QQC2.ToolBar {
     }
 
     contentItem: RowLayout {
-        spacing: Kirigami.Units.smallSpacing
+        spacing: Units.smallSpacing
 
         Rectangle {
-            width: Kirigami.Units.gridUnit * 0.6
+            width: Units.gridUnit * 0.6
             height: width
             radius: width / 2
-            color: bar.phone.dnd ? Kirigami.Theme.negativeTextColor : bar.stateColor(bar.activeState ? bar.activeState.state : "off")
-            Layout.leftMargin: Kirigami.Units.smallSpacing
+            color: bar.phone.dnd ? Theme.negativeTextColor : bar.stateColor(bar.activeState ? bar.activeState.state : "off")
+            Layout.leftMargin: Units.smallSpacing
         }
 
         QQC2.ToolButton {
@@ -55,7 +54,7 @@ QQC2.ToolBar {
                 QQC2.Label {
                     Layout.fillWidth: true
                     text: bar.phone.dnd ? "Do not disturb" : bar.phone.statusText
-                    font: Kirigami.Theme.smallFont
+                    font: Theme.smallFont
                     opacity: 0.75
                     elide: Text.ElideRight
                 }
@@ -95,13 +94,12 @@ QQC2.ToolBar {
         }
 
         // --source: what's being sent instead of the microphone.
-        Kirigami.Chip {
+        Chip {
             visible: bar.phone.sourceLabel !== ""
-            closable: false
             checkable: false
             icon.name: "audio-x-generic"
             text: "Source: " + bar.phone.sourceLabel
-            Layout.maximumWidth: Kirigami.Units.gridUnit * 9
+            Layout.maximumWidth: Units.gridUnit * 9
             QQC2.ToolTip.text: "Sending " + bar.phone.sourceDetail + " instead of the microphone (--source)"
             QQC2.ToolTip.visible: hovered
         }

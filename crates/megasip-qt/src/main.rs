@@ -1,4 +1,7 @@
-//! MegaSIP: a voice-only port of MicroSIP for KDE Plasma.
+//! MegaSIP: a voice-only port of MicroSIP for Linux desktops and Windows.
+
+// A release build on Windows is a GUI app: no console window behind it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod appcpp;
 mod bridge;

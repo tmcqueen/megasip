@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 // MicroSIP's dial pad: number field, keypad, call / redial / hang up.
 // During a call the keys send DTMF to the active call.
@@ -54,8 +53,8 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.smallSpacing
+        anchors.margins: Units.largeSpacing
+        spacing: Units.smallSpacing
 
         RowLayout {
             Layout.fillWidth: true
@@ -63,7 +62,7 @@ Item {
             QQC2.TextField {
                 id: number
                 Layout.fillWidth: true
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.5
+                font.pointSize: Theme.defaultFont.pointSize * 1.5
                 horizontalAlignment: Text.AlignHCenter
                 placeholderText: "Number or SIP address"
                 inputMethodHints: Qt.ImhDialableCharactersOnly
@@ -89,7 +88,7 @@ Item {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
                 text: page.activeCall ? (page.activeCall.name || page.activeCall.number) : ""
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.3
+                font.pointSize: Theme.defaultFont.pointSize * 1.3
                 elide: Text.ElideRight
             }
             QQC2.Label {
@@ -126,29 +125,29 @@ Item {
             id: keys
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
-            Layout.maximumWidth: Kirigami.Units.gridUnit * 16
+            Layout.maximumWidth: Units.gridUnit * 16
             columns: 3
-            rowSpacing: Kirigami.Units.smallSpacing
-            columnSpacing: Kirigami.Units.smallSpacing
+            rowSpacing: Units.smallSpacing
+            columnSpacing: Units.smallSpacing
             Repeater {
                 model: [["1", ""], ["2", "ABC"], ["3", "DEF"], ["4", "GHI"], ["5", "JKL"], ["6", "MNO"],
                         ["7", "PQRS"], ["8", "TUV"], ["9", "WXYZ"], ["*", ""], ["0", "+"], ["#", ""]]
                 QQC2.Button {
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Kirigami.Units.gridUnit * 2.8
+                    Layout.preferredHeight: Units.gridUnit * 2.8
                     focusPolicy: Qt.NoFocus
                     contentItem: ColumnLayout {
                         spacing: 0
                         QQC2.Label {
                             Layout.alignment: Qt.AlignHCenter
                             text: modelData[0]
-                            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.6
+                            font.pointSize: Theme.defaultFont.pointSize * 1.6
                         }
                         QQC2.Label {
                             Layout.alignment: Qt.AlignHCenter
                             text: modelData[1]
-                            font: Kirigami.Theme.smallFont
+                            font: Theme.smallFont
                             opacity: 0.6
                             visible: text.length > 0
                         }
@@ -161,8 +160,8 @@ Item {
 
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            Layout.topMargin: Kirigami.Units.smallSpacing
-            spacing: Kirigami.Units.largeSpacing
+            Layout.topMargin: Units.smallSpacing
+            spacing: Units.largeSpacing
             visible: !page.inCall
 
             QQC2.Button {
@@ -176,13 +175,13 @@ Item {
                 focusPolicy: Qt.NoFocus
             }
             QQC2.RoundButton {
-                implicitWidth: Kirigami.Units.gridUnit * 3.5
+                implicitWidth: Units.gridUnit * 3.5
                 implicitHeight: implicitWidth
                 icon.name: "call-start"
-                icon.width: Kirigami.Units.iconSizes.medium
-                icon.height: Kirigami.Units.iconSizes.medium
+                icon.width: Units.iconSizes.medium
+                icon.height: Units.iconSizes.medium
                 icon.color: "white"
-                palette.button: Kirigami.Theme.positiveTextColor
+                palette.button: Theme.positiveTextColor
                 onClicked: page.call()
                 QQC2.ToolTip.text: "Call"
                 QQC2.ToolTip.visible: hovered

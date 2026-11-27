@@ -18,7 +18,7 @@ pub enum SrtpMode {
 }
 
 impl SrtpMode {
-    pub fn from_str(s: &str) -> SrtpMode {
+    pub fn parse(s: &str) -> SrtpMode {
         match s {
             "mandatory" => SrtpMode::Mandatory,
             "optional" => SrtpMode::Optional,

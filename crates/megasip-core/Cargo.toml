@@ -1,0 +1,29 @@
+[package]
+name = "megasip-core"
+description = "MegaSIP's toolkit-independent core: SIP engine, media, settings, IPC and the headless CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rsiprtp.workspace = true
+tokio.workspace = true
+cpal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+dirs.workspace = true
+chrono.workspace = true
+sonora.workspace = true
+lewton.workspace = true
+venator.workspace = true
+tracing-log.workspace = true
+secret-service.workspace = true
+rusqlite.workspace = true
+symphonia.workspace = true

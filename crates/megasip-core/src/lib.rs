@@ -5,6 +5,7 @@
 pub mod accounticon;
 pub mod cli;
 pub mod config;
+pub mod controller;
 pub mod db;
 pub mod debug;
 pub mod engine;

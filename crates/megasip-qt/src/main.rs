@@ -6,7 +6,8 @@ mod bridge;
 // The toolkit-independent modules live in `megasip-core`; re-exported here so this crate's
 // code keeps addressing them as `crate::config`, `crate::engine` and so on.
 pub use megasip_core::{
-    accounticon, cli, config, db, debug, engine, ipc, logging, media, secrets, store, SOURCE,
+    accounticon, cli, config, controller, db, debug, engine, ipc, logging, media, secrets, store,
+    SOURCE,
 };
 
 use std::sync::OnceLock;

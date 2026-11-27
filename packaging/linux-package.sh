@@ -91,7 +91,11 @@ rpm_runtime="qt6-qtdeclarative qt6-qtsvg"
 rpm_recommends="kf6-qqc2-desktop-style kf6-knotifications"
 rpmtop="$work/rpm"
 mkdir -p "$rpmtop"/{BUILD,RPMS,SPECS,BUILDROOT}
+# The same Qt-private functions as above: rpmbuild would require
+# libQt6Qml.so.6(Qt_6_PRIVATE_API), which Fedora's Qt doesn't provide under that name.
+# Drop it the same way.
 cat >"$rpmtop/SPECS/megasip.spec" <<EOF
+%global __requires_exclude ^lib.*\\(Qt_6_PRIVATE_API\\)
 Name:           megasip
 Version:        $version
 Release:        1

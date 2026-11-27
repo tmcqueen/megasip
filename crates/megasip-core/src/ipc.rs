@@ -1,15 +1,16 @@
-//! Talking to running MegaSIP windows: each process listens on its own Unix socket,
-//! `$XDG_RUNTIME_DIR/megasip-<pid>.sock`; which PIDs are running (and with which account)
+//! Talking to running MegaSIP windows: each process listens on its own endpoint, a Unix
+//! socket `$XDG_RUNTIME_DIR/megasip-<pid>.sock` on Linux and a named pipe
+//! `\\.\pipe\megasip-<pid>` on Windows; which PIDs are running (and with which account)
 //! is in `megasip.db` (see `db`).
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Mutex;
 
 static RX: Mutex<Option<Receiver<String>>> = Mutex::new(None);
 
+#[cfg(unix)]
 pub fn path_for(pid: u32) -> PathBuf {
     let dir = std::env::var("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -17,18 +18,55 @@ pub fn path_for(pid: u32) -> PathBuf {
     dir.join(format!("megasip-{pid}.sock"))
 }
 
+#[cfg(windows)]
+pub fn path_for(pid: u32) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\megasip-{pid}"))
+}
+
+/// Connect to the endpoint at `path`.
+#[cfg(unix)]
+fn connect(path: &Path) -> std::io::Result<impl Write> {
+    std::os::unix::net::UnixStream::connect(path)
+}
+
+#[cfg(windows)]
+fn connect(path: &Path) -> std::io::Result<impl Write> {
+    use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
+    Stream::connect(path.to_fs_name::<GenericFilePath>()?)
+}
+
+/// Listen at `path` (owner-only on Unix); the connections, as they come.
+#[cfg(unix)]
+fn bind(path: &Path) -> std::io::Result<impl Iterator<Item = impl Read + Send> + Send> {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::remove_file(path);
+    let l = std::os::unix::net::UnixListener::bind(path)?;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    Ok(std::iter::from_fn(move || Some(l.accept().map(|(s, _)| s))).flatten())
+}
+
+/// A named pipe that refuses remote clients (interprocess's default).
+#[cfg(windows)]
+fn bind(path: &Path) -> std::io::Result<impl Iterator<Item = impl Read + Send> + Send> {
+    use interprocess::local_socket::{prelude::*, GenericFilePath, ListenerOptions};
+    let l = ListenerOptions::new()
+        .name(path.to_fs_name::<GenericFilePath>()?)
+        .create_sync()?;
+    Ok(std::iter::from_fn(move || Some(l.accept())).flatten())
+}
+
 /// Send `line` to the window with this PID. Returns true if it took it.
 pub fn send_to(pid: u32, line: &str) -> bool {
     send_at(&path_for(pid), &[line.to_string()])
 }
 
-fn send_at(path: &std::path::Path, lines: &[String]) -> bool {
+fn send_at(path: &Path, lines: &[String]) -> bool {
     let mut msg = String::new();
     for l in lines {
         msg.push_str(l);
         msg.push('\n');
     }
-    match UnixStream::connect(path) {
+    match connect(path) {
         Ok(mut s) => match s.write_all(msg.as_bytes()) {
             Ok(()) => {
                 tracing::debug!("ipc: sent {lines:?} to {}", path.display());
@@ -78,11 +116,10 @@ pub fn send_self(line: &str) -> bool {
     send_to(std::process::id(), line)
 }
 
-/// Start listening on this process's socket.
+/// Start listening on this process's endpoint.
 pub fn listen() {
     let p = path_for(std::process::id());
-    let _ = std::fs::remove_file(&p);
-    let l = match UnixListener::bind(&p) {
+    let incoming = match bind(&p) {
         Ok(l) => l,
         Err(e) => {
             tracing::warn!("ipc: can't listen on {}: {e}", p.display());
@@ -90,14 +127,10 @@ pub fn listen() {
         }
     };
     tracing::debug!("ipc: listening on {}", p.display());
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
-    }
     let (tx, rx) = channel();
     *RX.lock().unwrap() = Some(rx);
     std::thread::spawn(move || {
-        for s in l.incoming().flatten() {
+        for s in incoming {
             tracing::debug!("ipc: connection accepted");
             let tx = tx.clone();
             std::thread::spawn(move || {
@@ -121,7 +154,9 @@ pub fn take_receiver() -> Option<Receiver<String>> {
     RX.lock().unwrap().take()
 }
 
+/// Remove this process's socket file (a named pipe goes away with its process).
 pub fn cleanup() {
+    #[cfg(unix)]
     let _ = std::fs::remove_file(path_for(std::process::id()));
 }
 
@@ -157,24 +192,43 @@ mod tests {
 
     #[test]
     fn lines_on_one_connection_arrive_in_order() {
-        let dir = std::env::temp_dir().join(format!("megasip-ipc-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("s.sock");
-        let _ = std::fs::remove_file(&p);
-        let l = UnixListener::bind(&p).unwrap();
+        #[cfg(unix)]
+        let (dir, p) = {
+            let dir = std::env::temp_dir().join(format!("megasip-ipc-test-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let p = dir.join("s.sock");
+            (Some(dir), p)
+        };
+        #[cfg(windows)]
+        let (dir, p): (Option<PathBuf>, _) = (
+            None,
+            PathBuf::from(format!(r"\\.\pipe\megasip-ipc-test-{}", std::process::id())),
+        );
+        let mut incoming = bind(&p).unwrap();
         let mut lines = vec!["show".to_string()];
         lines.extend(handoff_lines(Some("123"), Some("pink")));
-        assert!(send_at(&p, &lines));
-        let (c, _) = l.accept().unwrap();
+        let sender = {
+            let p = p.clone();
+            let lines = lines.clone();
+            std::thread::spawn(move || send_at(&p, &lines))
+        };
+        let c = incoming.next().unwrap();
         let got: Vec<String> = BufReader::new(c).lines().map_while(Result::ok).collect();
+        assert!(sender.join().unwrap());
         assert_eq!(got, ["show", "dial 123\tpink"]);
-        let _ = std::fs::remove_dir_all(&dir);
+        if let Some(d) = dir {
+            let _ = std::fs::remove_dir_all(&d);
+        }
     }
 
     #[test]
     fn path_is_per_pid() {
         assert!(super::path_for(42)
             .to_string_lossy()
-            .ends_with("megasip-42.sock"));
+            .ends_with(if cfg!(windows) {
+                "megasip-42"
+            } else {
+                "megasip-42.sock"
+            }));
     }
 }

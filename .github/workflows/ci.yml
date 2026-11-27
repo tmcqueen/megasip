@@ -4,7 +4,6 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
 
 permissions:
   contents: read
@@ -75,11 +74,9 @@ jobs:
     # The Qt app on Windows with the official Qt build, packaged with windeployqt into a
     # zip that runs on a machine without Qt. The packaged copy is then run on its own (Qt
     # taken off PATH) to screenshot every screen, offscreen. The zip and the screenshots
-    # are uploaded as artifacts; on a v* tag the zip is attached to a GitHub release.
+    # are uploaded as artifacts. Releases get their zip from the Release workflow.
     name: MegaSIP on Windows
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: jurplel/install-qt-action@v4
@@ -98,24 +95,7 @@ jobs:
       - name: Package
         id: package
         shell: pwsh
-        run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          $name = "MegaSIP-$version-windows-x64"
-          $dist = "dist\$name"
-          New-Item -ItemType Directory -Force $dist | Out-Null
-          Copy-Item target\release\megasip.exe $dist
-          windeployqt --release --qmldir crates\megasip-qt\qml --no-translations `
-            --no-system-d3d-compiler --no-opengl-sw "$dist\megasip.exe"
-          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
-          # The Visual C++ runtime, app-local, so it runs where it isn't installed.
-          foreach ($dll in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll") {
-            Copy-Item "$env:SystemRoot\System32\$dll" $dist
-          }
-          Copy-Item LICENSE "$dist\LICENSE.txt"
-          Copy-Item crates\megasip-qt\icons\README.md "$dist\ICONS-LICENSE.md"
-          Compress-Archive -Path $dist -DestinationPath "dist\$name.zip"
-          "name=$name" >> $env:GITHUB_OUTPUT
-          Get-ChildItem dist
+        run: packaging\windows-package.ps1 -Source . -Out dist
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.name }}
@@ -143,8 +123,3 @@ jobs:
           name: windows-screenshots
           path: ${{ runner.temp }}/shots
           if-no-files-found: ignore
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/${{ steps.package.outputs.name }}.zip

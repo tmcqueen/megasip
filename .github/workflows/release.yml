@@ -1,0 +1,236 @@
+name: Release
+
+# Builds everything a release carries and attaches it: the Windows zip, and a .deb, an .rpm
+# and a .tgz for x86_64 and aarch64 Linux.
+#
+# - Pushing a tag (v0.8.0, or V0.8.0) builds that tag and attaches the files to its
+#   release, creating the release if there isn't one yet.
+# - Run it by hand (Actions > Release > Run workflow) with an existing tag to build that tag
+#   again and attach the files to its release, replacing files of the same name. This is
+#   for a release whose files are missing or need rebuilding. The packaging scripts come
+#   from the branch you run it on, so an older tag can be packaged with today's scripts.
+# - A pull request that changes this file or packaging/ builds and install-tests the
+#   packages without publishing anything.
+
+on:
+  push:
+    tags: ["v*", "V*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and attach to, e.g. v0.8.0 (it must already exist)"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # The tag being built: the pushed one, or the one given to a manual run. Empty on a pull
+  # request, which builds its own head instead.
+  TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # The .deb and .tgz, built on Debian 13 (Qt 6.8, glibc 2.41), the oldest target with a
+    # new enough Qt, so they also install on newer Debian and Ubuntu.
+    container: debian:trixie
+    steps:
+      - name: Install system packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git \
+            build-essential pkg-config clang lld \
+            qt6-base-dev qt6-declarative-dev libasound2-dev dpkg-dev
+      # The packaging scripts, from the commit this workflow runs from.
+      - uses: actions/checkout@v5
+      # The source being released.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          key: release
+      - name: Build (release)
+        working-directory: src
+        run: cargo build -p megasip-qt --release --locked
+      - name: Package
+        run: packaging/linux-package.sh src dist deb tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # The .rpm, built on Fedora against Fedora's Qt: the binary calls a few Qt-private
+  # functions, and Fedora's Qt versions those symbols differently from Debian's.
+  fedora:
+    name: Fedora ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: fedora:43
+    steps:
+      - name: Install system packages
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            git gcc gcc-c++ clang lld pkgconf-pkg-config \
+            qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel \
+            alsa-lib-devel rpm-build tar
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          key: release-fedora
+      - name: Build (release)
+        working-directory: src
+        run: cargo build -p megasip-qt --release --locked
+      - name: Package
+        run: packaging/linux-package.sh src dist rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # Install each package on a clean system with nothing but what it pulls in, then start
+  # MegaSIP offscreen and screenshot every screen, so a missing library or QML module fails
+  # here rather than on someone's desktop.
+  install-test:
+    name: Install on ${{ matrix.distro }} ${{ matrix.arch }}
+    needs: [linux, fedora]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        distro: ["debian:trixie", "ubuntu:26.04", "fedora:43"]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: ${{ matrix.distro }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ startsWith(matrix.distro, 'fedora') && 'fedora' || 'linux' }}-${{ matrix.arch }}
+          path: dist
+      - name: Install the .deb
+        if: "!startsWith(matrix.distro, 'fedora')"
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y ./dist/megasip_*.deb
+          # Only for this test: the offscreen platform plugin.
+          apt-get install -y qt6-qpa-plugins || true
+      - name: Install the .rpm
+        if: startsWith(matrix.distro, 'fedora')
+        run: dnf install -y ./dist/megasip-*.rpm
+      - name: Start it and screenshot every screen
+        timeout-minutes: 3
+        run: |
+          megasip --help >/dev/null
+          mkdir -p "$RUNNER_TEMP/shots"
+          export QT_QPA_PLATFORM=offscreen MEGASIP_SCREENSHOT="$RUNNER_TEMP/shots/megasip"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg" && mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          megasip && code=0 || code=$?
+          count=$(ls "$RUNNER_TEMP/shots" | wc -l)
+          echo "exit code $code, $count screenshots"
+          [ "$count" -ge 20 ] || { echo "expected at least 20 screenshots"; exit 1; }
+      - name: The .tgz's install.sh
+        if: "!startsWith(matrix.distro, 'fedora')"
+        run: |
+          mkdir t && tar -C t -xzf dist/megasip-*.tgz
+          PREFIX="$RUNNER_TEMP/prefix" t/megasip-*/install.sh
+          test -x "$RUNNER_TEMP/prefix/bin/megasip"
+          test -f "$RUNNER_TEMP/prefix/share/applications/org.megasip.MegaSIP.desktop"
+          PREFIX="$RUNNER_TEMP/prefix" t/megasip-*/install.sh --uninstall
+          test ! -e "$RUNNER_TEMP/prefix/bin/megasip"
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+          path: src
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.*"
+          arch: win64_msvc2022_64
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          key: release
+      - name: Build (release)
+        working-directory: src
+        run: cargo build -p megasip-qt --release --locked
+      - name: Package
+        shell: pwsh
+        run: packaging\windows-package.ps1 -Source src -Out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    if: github.event_name != 'pull_request'
+    needs: [linux, fedora, install-test, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l dist
+          # A release made by hand keeps its title and notes; only the files are added.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "MegaSIP $TAG" --generate-notes
+          fi
+          gh release upload "$TAG" dist/* --clobber
